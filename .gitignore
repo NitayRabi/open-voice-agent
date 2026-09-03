@@ -1,0 +1,42 @@
+# Scratch / vendored external checkouts
+.tmp/
+.opencode/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+dist/
+.env.local
+
+# Virtualenv marker dirs
+personaplex/.venv/
+
+# Runtime artifacts
+*.log
+voicechat/turns/
+voicechat/vc.log
+personaplex/out/
+personaplex/diag/
+personaplex/webui.log
+
+# Audio / model blobs
+*.wav
+*.flac
+*.mp3
+*.ogg
+*.safetensors
+*.gguf
+*.bin
+trace*.json
+*.nsys-rep
+*.sqlite
+
+# Secrets / certs
+*.pem
+personaplex/ssl/
