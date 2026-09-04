@@ -20,6 +20,7 @@ const FIELDS = {
   mic_device_id: "value",
   noise_gate_db: "int",
   autostart_listening: "checked",
+  app_autostart: "checked",
   instructions: "value",
   hotkey: "value",
   delegation_enabled: "checked",

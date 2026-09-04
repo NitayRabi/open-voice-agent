@@ -138,6 +138,10 @@ pub struct Settings {
     /// Start listening automatically as soon as the backend is reachable.
     #[serde(default)]
     pub autostart_listening: bool,
+    /// Register the Tauri app to launch when the user logs in. When
+    /// `manage_backend` is also enabled, the configured server starts with it.
+    #[serde(default)]
+    pub app_autostart: bool,
 
     // ── delegation to the "brain" ──────────────────────────────────
     #[serde(default = "d_true")]
@@ -270,6 +274,20 @@ impl Settings {
             && self.brain_local_port == o.brain_local_port
             && self.brain_local_ctx == o.brain_local_ctx
             && self.brain_local_ngl == o.brain_local_ngl
+    }
+
+    /// True when nothing that affects the managed backend process has changed.
+    pub fn backend_config_eq(&self, o: &Settings) -> bool {
+        self.manage_backend == o.manage_backend
+            && self.launch_command == o.launch_command
+            && self.launch_cwd == o.launch_cwd
+            && self.launch_env == o.launch_env
+            && self.speech_model == o.speech_model
+            && self.speech_model_source == o.speech_model_source
+            && self.speech_remote_base_url == o.speech_remote_base_url
+            && self.speech_remote_model == o.speech_remote_model
+            && self.speech_remote_api_key == o.speech_remote_api_key
+            && self.web_tls_cert == o.web_tls_cert
     }
 
     /// True when nothing that affects the embedded web server has changed.

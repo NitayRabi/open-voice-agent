@@ -19,6 +19,7 @@ use crate::backend::BackendManager;
 use crate::config::Settings;
 use crate::localbrain::LocalBrain;
 use crate::webserver::WebServer;
+use tauri_plugin_autostart::ManagerExt;
 
 pub struct AppState {
     settings: Mutex<Settings>,
@@ -52,26 +53,31 @@ fn save_settings(
             .map(char::from)
             .collect();
     }
-    let backend_changed = {
+    let (backend_changed, autostart_changed) = {
         let previous = state.settings.lock();
-        previous.speech_model != settings.speech_model
-            || previous.speech_model_source != settings.speech_model_source
-            || previous.speech_remote_base_url != settings.speech_remote_base_url
-            || previous.speech_remote_model != settings.speech_remote_model
-            || previous.speech_remote_api_key != settings.speech_remote_api_key
+        (
+            !previous.backend_config_eq(&settings),
+            previous.app_autostart != settings.app_autostart,
+        )
     };
-    let keep_backend_running = settings.manage_backend;
     settings.save(&app).map_err(|e| e.to_string())?;
     let hk = settings.hotkey.clone();
+    let app_autostart = settings.app_autostart;
+    let manage_backend = settings.manage_backend;
     let web_changed = !state.settings.lock().web_config_eq(&settings);
     *state.settings.lock() = settings;
     hotkey::apply(&app, &hk)?;
+    if autostart_changed {
+        apply_autostart(&app, app_autostart)?;
+    }
     if web_changed {
         apply_web(&app);
     }
-    if backend_changed && state.backend.is_running() {
-        state.backend.stop(&app);
-        if keep_backend_running {
+    if backend_changed {
+        if state.backend.is_running() {
+            state.backend.stop(&app);
+        }
+        if manage_backend {
             let cfg = state.settings.lock().clone();
             state.backend.start(&app, &cfg)?;
         }
@@ -79,6 +85,16 @@ fn save_settings(
     state.brain_server.reconcile(&app);
     app.emit("settings-changed", ()).ok();
     Ok(())
+}
+
+fn apply_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    let manager = app.autolaunch();
+    if enabled {
+        manager.enable()
+    } else {
+        manager.disable()
+    }
+    .map_err(|e| format!("could not update launch-at-login: {e}"))
 }
 
 /// Bring the embedded web server in line with the current settings.
@@ -284,6 +300,10 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -316,6 +336,7 @@ pub fn run() {
             let settings = Settings::load(&handle);
             let hk = settings.hotkey.clone();
             let manage_backend = settings.manage_backend;
+            let app_autostart = settings.app_autostart;
 
             let web_enabled = settings.web_enabled;
             let setup_completed = settings.setup_completed;
@@ -332,6 +353,12 @@ pub fn run() {
                 eprintln!("[hotkey] {e}");
             }
             build_tray(&handle)?;
+
+            // Reconcile the OS registration with config on every launch too, so
+            // manually edited or restored config files take effect.
+            if let Err(e) = apply_autostart(&handle, app_autostart) {
+                eprintln!("[autostart] {e}");
+            }
 
             if !setup_completed {
                 open_settings(&handle);

@@ -94,7 +94,9 @@ impl BackendManager {
         } else {
             PathBuf::from(&cfg.launch_cwd)
         };
-        if !has_speech_runtime(&cwd) {
+        let is_bundled_voice_launcher = cfg.launch_command.get(0).map(String::as_str) == Some("bash")
+            && cfg.launch_command.get(1).map(String::as_str) == Some("hf-s2s/run-comparison.sh");
+        if is_bundled_voice_launcher && !has_speech_runtime(&cwd) {
             return Err(
                 "the Parakeet/TTS runtime is not installed; install the required voice runtime before completing Setup"
                     .into(),

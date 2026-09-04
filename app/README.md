@@ -62,7 +62,10 @@ task to the brain and speaks back the answer.
   feeds the answer back so the voice model speaks it. Toggle
   *speak the result* off for a bare ack.
 - **Automatic engine lifecycle** — after setup, the app starts the fixed speech
-  pipeline automatically and injects the selected conversational model.
+  backend when it opens and stops it when it quits. Enable **Launch Open Voice
+  Agent when I log in** to register the app with the OS; the managed backend then
+  starts at login as well. `manage_backend`, `launch_command`, `launch_cwd`, and
+  `launch_env` in `config.json` can also supervise a custom server command.
 - **Models** — download GGUF weights on demand (nothing ships in the installer);
   see [What ships vs. what you download](#what-ships-vs-what-you-download).
 - **Web UI** — the *Web* tab turns on an embedded server that serves the exact
@@ -162,7 +165,7 @@ cd src-tauri && cargo build --release && ./target/release/open-voice-agent
 ```
 
 First-run setup starts the speech pipeline automatically. For low-level
-development outside the app, it can still be launched directly:
+  development outside the app, it can still be launched directly:
 
 ```bash
 bash hf-s2s/run-comparison.sh        # ws://127.0.0.1:8766/v1/realtime
