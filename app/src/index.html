@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Open Voice Agent — Settings</title>
+    <link rel="stylesheet" href="./styles/settings.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Open Voice Agent</h1>
+      <span id="version" class="muted"></span>
+    </header>
+
+    <nav class="tabs">
+      <button data-tab="speech" class="active">Speech</button>
+      <button data-tab="delegation">Delegation</button>
+      <button data-tab="models">Models</button>
+      <button data-tab="engine">Engines</button>
+      <button data-tab="web">Web</button>
+      <button data-tab="log">Log</button>
+    </nav>
+
+    <main>
+      <!-- SPEECH -->
+      <section id="tab-speech" class="tab active">
+        <label>
+          <span>Backend</span>
+          <select id="backend_mode">
+            <option value="hf_realtime">Hugging Face speech-to-speech (Realtime WS cascade)</option>
+            <option value="voicechat_http">VoiceChat 11B (turn-based HTTP)</option>
+          </select>
+        </label>
+        <label data-mode="hf_realtime">
+          <span>Realtime WebSocket URL</span>
+          <input id="server_url" type="text" spellcheck="false" placeholder="ws://127.0.0.1:8765/v1/realtime" />
+          <small>Where <code>speech-to-speech serve</code> is listening (<code>/v1/realtime</code>).</small>
+        </label>
+        <label data-mode="voicechat_http">
+          <span>VoiceChat base URL</span>
+          <input id="voicechat_url" type="text" spellcheck="false" placeholder="https://127.0.0.1:8999" />
+        </label>
+        <label>
+          <span>Voice</span>
+          <select id="voice">
+            <option>Aiden</option><option>Ryan</option><option>Dylan</option><option>Eric</option>
+            <option>Ono_Anna</option><option>Serena</option><option>Sohee</option>
+            <option>Uncle_Fu</option><option>Vivian</option>
+          </select>
+        </label>
+        <label>
+          <span>Pipeline sample rate</span>
+          <select id="sample_rate">
+            <option value="16000">16000 Hz (speech-to-speech default)</option>
+            <option value="24000">24000 Hz</option>
+          </select>
+        </label>
+        <label>
+          <span>Microphone</span>
+          <select id="mic_device_id"><option value="">System default</option></select>
+        </label>
+        <label>
+          <span>Noise gate: <b id="gate_val">off</b></span>
+          <input id="noise_gate_db" type="range" min="-100" max="-3" step="1" value="-100" />
+          <small>Mutes the mic below the threshold so room noise is not sent. Far left = off.</small>
+        </label>
+        <label class="check">
+          <input id="autostart_listening" type="checkbox" />
+          <span>Start listening automatically when the app opens</span>
+        </label>
+        <label>
+          <span>Instructions (system prompt)</span>
+          <textarea id="instructions" rows="5"></textarea>
+        </label>
+        <label>
+          <span>Global toggle hotkey</span>
+          <input id="hotkey" type="text" spellcheck="false" placeholder="CommandOrControl+Shift+Space" />
+          <small>Tauri accelerator syntax, e.g. <code>Alt+Space</code>, <code>CommandOrControl+Shift+V</code>.</small>
+        </label>
+      </section>
+
+      <!-- DELEGATION -->
+      <section id="tab-delegation" class="tab">
+        <p class="muted">
+          The voice model just talks. It has one tool — <code>delegate_task</code> — and
+          calls it when something actually needs doing. The task then goes to a single,
+          more capable model behind an OpenAI-compatible endpoint (the "brain"), and its
+          answer is spoken back.
+        </p>
+        <label class="check">
+          <input id="delegation_enabled" type="checkbox" />
+          <span>Enable delegation (expose the tool to the voice model)</span>
+        </label>
+        <label>
+          <span>Brain source</span>
+          <select id="brain_source">
+            <option value="remote">Remote endpoint (OpenAI-compatible)</option>
+            <option value="local">Local — the app runs llama.cpp on a downloaded model</option>
+          </select>
+        </label>
+
+        <div data-brain="remote">
+          <label>
+            <span>Brain endpoint (base URL)</span>
+            <input id="brain_base_url" type="text" spellcheck="false" placeholder="http://127.0.0.1:8080/v1" />
+            <small>Include <code>/v1</code>. OpenAI, an HF Inference endpoint, or your own vLLM / llama-server.</small>
+          </label>
+          <label>
+            <span>Brain model</span>
+            <input id="brain_model" type="text" spellcheck="false" placeholder="e.g. gpt-4o-mini, or your local alias" />
+          </label>
+          <label>
+            <span>API key</span>
+            <input id="brain_api_key" type="password" autocomplete="off" spellcheck="false" placeholder="(blank for a local server)" />
+          </label>
+        </div>
+
+        <div data-brain="local">
+          <label>
+            <span>Local model</span>
+            <select id="brain_local_model"></select>
+            <small>Downloaded models from the <b>Models</b> tab, or paste an absolute <code>.gguf</code> path.</small>
+          </label>
+          <label>
+            <span>llama-server binary</span>
+            <input id="llama_server_bin" type="text" spellcheck="false" placeholder="llama-server" />
+            <small>Not bundled. Install llama.cpp or point this at your build.</small>
+          </label>
+          <div class="field-row">
+            <label class="field"><span>Port</span><input id="brain_local_port" type="number" min="1" max="65535" /></label>
+            <label class="field"><span>Context</span><input id="brain_local_ctx" type="number" min="512" step="512" /></label>
+            <label class="field"><span>GPU layers</span><input id="brain_local_ngl" type="number" min="0" /></label>
+          </div>
+        </div>
+
+        <label>
+          <span>Brain system prompt</span>
+          <textarea id="brain_system_prompt" rows="4"></textarea>
+        </label>
+        <label>
+          <span>Temperature</span>
+          <input id="brain_temperature" type="number" min="0" max="2" step="0.1" />
+        </label>
+        <label>
+          <span>Tool name</span>
+          <input id="delegation_tool_name" type="text" spellcheck="false" />
+        </label>
+        <label>
+          <span>Tool description</span>
+          <textarea id="delegation_tool_description" rows="3"></textarea>
+        </label>
+        <label>
+          <span>Timeout (seconds)</span>
+          <input id="delegation_timeout_s" type="number" min="5" max="600" />
+        </label>
+        <label class="check">
+          <input id="delegation_speak_result" type="checkbox" />
+          <span>Speak the finished result back through the model (not just an ack)</span>
+        </label>
+        <div class="row">
+          <button id="test_delegate" class="secondary">Test delegation…</button>
+          <span id="test_delegate_out" class="muted"></span>
+        </div>
+      </section>
+
+      <!-- MODELS -->
+      <section id="tab-models" class="tab">
+        <p class="muted">
+          Nothing heavy ships in the installer. Download a local model here (stored under
+          the app data dir), or use a remote endpoint instead (Delegation tab). Downloads
+          resume and are verified.
+        </p>
+        <label>
+          <span>Hugging Face token</span>
+          <input id="hf_token" type="password" autocomplete="off" spellcheck="false"
+            placeholder="(optional — needed for gated repos like Gemma)" />
+        </label>
+
+        <details class="add-model">
+          <summary>Add a model</summary>
+          <div class="field-row">
+            <label class="field"><span>Name</span><input id="am_name" type="text" spellcheck="false" placeholder="My model" /></label>
+          </div>
+          <div class="field-row">
+            <label class="field"><span>HF repo</span><input id="am_repo" type="text" spellcheck="false" placeholder="bartowski/Qwen2.5-3B-Instruct-GGUF" /></label>
+            <label class="field"><span>File</span><input id="am_file" type="text" spellcheck="false" placeholder="Qwen2.5-3B-Instruct-Q4_K_M.gguf" /></label>
+          </div>
+          <label><span>…or direct URL</span><input id="am_url" type="text" spellcheck="false" placeholder="https://…/model.gguf" /></label>
+          <div class="row"><button id="am_add" type="button" class="secondary">Add</button></div>
+        </details>
+
+        <div id="model_list" class="model-list"></div>
+      </section>
+
+      <!-- ENGINE -->
+      <section id="tab-engine" class="tab">
+        <p class="muted">
+          Let the app supervise the speech backend process. Engine knobs (STT device, LLM
+          binary/model, TTS backend, quant) go through as environment variables — the same
+          ones <code>hf-s2s/run-comparison.sh</code> and <code>run.sh</code> read.
+        </p>
+        <div class="row presets">
+          <span>Presets:</span>
+          <button data-preset="hf" class="secondary">HF cascade (Parakeet→Gemma→Qwen3-TTS)</button>
+          <button data-preset="vc4" class="secondary">VoiceChat Q4_0</button>
+          <button data-preset="vc8" class="secondary">VoiceChat Q8_0</button>
+        </div>
+        <label class="check">
+          <input id="manage_backend" type="checkbox" />
+          <span>Start / stop the speech backend from this app</span>
+        </label>
+        <label>
+          <span>Launch command</span>
+          <input id="launch_command" type="text" spellcheck="false" />
+          <small>Space-separated. Run relative to the working directory below.</small>
+        </label>
+        <label>
+          <span>Working directory</span>
+          <input id="launch_cwd" type="text" spellcheck="false" placeholder="(repo root, guessed)" />
+        </label>
+        <label>
+          <span>Health URL</span>
+          <input id="health_url" type="text" spellcheck="false" placeholder="http://127.0.0.1:8766/" />
+        </label>
+        <label>
+          <span>Engine environment (KEY=VALUE per line)</span>
+          <textarea id="launch_env" rows="8" spellcheck="false"></textarea>
+        </label>
+        <div class="row">
+          <button id="backend_start" class="secondary">Start backend</button>
+          <button id="backend_stop" class="secondary">Stop backend</button>
+          <span id="backend_state" class="muted">unknown</span>
+        </div>
+      </section>
+
+      <!-- WEB -->
+      <section id="tab-web" class="tab">
+        <p class="muted">
+          Serve this config screen and the voice UI over HTTP so a browser — on this
+          machine or another device — can use it. The voice UI is at <code>/</code>,
+          this form at <code>/settings</code>.
+        </p>
+        <label class="check">
+          <input id="web_enabled" type="checkbox" />
+          <span>Enable the web server</span>
+        </label>
+        <div class="field-row">
+          <label class="field">
+            <span>Bind address</span>
+            <select id="web_bind">
+              <option value="127.0.0.1">127.0.0.1 (this machine only)</option>
+              <option value="0.0.0.0">0.0.0.0 (the LAN)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Port</span>
+            <input id="web_port" type="number" min="1" max="65535" />
+          </label>
+        </div>
+        <label>
+          <span>Access token</span>
+          <input id="web_token" type="password" autocomplete="off" spellcheck="false"
+            placeholder="(blank = no auth; required-ish when bound to 0.0.0.0)" />
+          <small>Sent as <code>?token=…</code>, <code>Authorization: Bearer</code>, or a cookie.</small>
+        </label>
+        <label>
+          <span>TLS certificate (PEM path)</span>
+          <input id="web_tls_cert" type="text" spellcheck="false" placeholder="(blank = plain HTTP)" />
+          <small>
+            Needed for microphone access from anything other than <code>localhost</code>.
+            Generate one:
+            <code>openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=$(hostname)"</code>
+          </small>
+        </label>
+        <label>
+          <span>TLS private key (PEM path)</span>
+          <input id="web_tls_key" type="text" spellcheck="false" placeholder="(blank = plain HTTP)" />
+        </label>
+        <div class="row">
+          <button id="web_open" type="button" class="secondary">Open web UI</button>
+          <span id="web_state" class="muted">stopped</span>
+        </div>
+      </section>
+
+      <!-- LOG -->
+      <section id="tab-log" class="tab">
+        <div class="row">
+          <button id="clear_log" class="secondary">Clear</button>
+          <label class="check inline"><input id="autoscroll" type="checkbox" checked /><span>Auto-scroll</span></label>
+        </div>
+        <pre id="log"></pre>
+      </section>
+    </main>
+
+    <footer>
+      <span id="status" class="muted"></span>
+      <div class="spacer"></div>
+      <button id="save" class="primary">Save</button>
+      <button id="save_restart" class="primary">Save &amp; restart speech</button>
+    </footer>
+
+    <script type="module" src="./settings.js"></script>
+  </body>
+</html>

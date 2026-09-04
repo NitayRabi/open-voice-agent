@@ -1,0 +1,63 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Open Voice Agent",
+  "version": "0.1.0",
+  "identifier": "ai.openvoice.agent",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws: wss: http: https:; media-src 'self' blob: mediastream:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    },
+    "windows": [
+      {
+        "label": "bubble",
+        "url": "bubble.html",
+        "title": "Open Voice Agent",
+        "width": 148,
+        "height": 148,
+        "minWidth": 148,
+        "minHeight": 148,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": true,
+        "focus": false
+      },
+      {
+        "label": "settings",
+        "url": "index.html",
+        "title": "Open Voice Agent — Settings",
+        "width": 760,
+        "height": 860,
+        "minWidth": 520,
+        "minHeight": 560,
+        "resizable": true,
+        "visible": false,
+        "center": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Productivity",
+    "shortDescription": "Floating voice agent with async delegation",
+    "longDescription": "A floating voice-agent bubble on the Hugging Face speech-to-speech stack (VAD -> STT -> LLM -> TTS over the OpenAI Realtime event set), with a global push-to-toggle hotkey, a settings screen, and asynchronous delegation to an ACP agent (OpenClaw)."
+  },
+  "plugins": {}
+}

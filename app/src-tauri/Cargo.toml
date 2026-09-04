@@ -1,0 +1,44 @@
+[package]
+name = "open-voice-agent"
+version = "0.1.0"
+description = "Floating voice agent + async delegation, on the Hugging Face speech-to-speech stack"
+authors = ["Nitay Rabinovich"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "open_voice_agent_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+parking_lot = "0.12"
+anyhow = "1"
+ureq = { version = "2", features = ["json"] }
+tiny_http = "0.12"
+include_dir = "0.7"
+urlencoding = "2"
+sha2 = "0.10"
+hex = "0.4"
+
+[features]
+# by default Tauri runs in production mode unless `tauri dev` is used
+default = ["custom-protocol", "webserver-tls"]
+custom-protocol = ["tauri/custom-protocol"]
+# optional HTTPS for the embedded web server (needed for mic access off-localhost)
+webserver-tls = ["tiny_http/ssl-rustls"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

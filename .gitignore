@@ -40,3 +40,8 @@ trace*.json
 # Secrets / certs
 *.pem
 personaplex/ssl/
+
+# Tauri app
+app/src-tauri/target/
+app/src-tauri/gen/
+app/dist/

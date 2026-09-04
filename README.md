@@ -3,6 +3,19 @@
 Local speech-to-speech voice agents on the R9700, delegating asynchronously to
 OpenClaw. Two stacks were built; **VoiceChat is the one to use.**
 
+## Desktop app
+
+`app/` is a Tauri app that wraps the Hugging Face speech-to-speech approach in a
+floating bubble: an always-on-top orb, a settings screen, a global hotkey to
+toggle speech, mic capture + playback in AudioWorklets, and the OpenAI-Realtime
+WS cascade (or the VoiceChat turn protocol). A conversational voice model does
+the talking and has one tool, `delegate_task`, which hands real work to a single
+more capable "brain" model behind an OpenAI-compatible endpoint and speaks back
+its answer. It can also serve the same config + voice UI over HTTP(S) for a
+browser or another device. No weights ship in the installer — the app downloads
+GGUF models on demand (whisper.cpp-app style) or uses a remote endpoint. See
+[`app/README.md`](app/README.md) to build and run it.
+
     ./run.sh                         # Q4_0, https://192.168.68.46:8999
     ./run.sh --quant Q8_0            # Q8_0
     ./run.sh --quant F16             # unquantized F16
