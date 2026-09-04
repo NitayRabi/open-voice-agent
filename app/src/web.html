@@ -8,11 +8,15 @@
   </head>
   <body>
     <header>
-      <span class="brand">Open Voice Agent</span>
-      <a id="settings-link" href="./settings">Settings</a>
+      <div class="brand-lockup"><span class="brand-mark" aria-hidden="true"></span><span class="brand">Open Voice Agent</span></div>
+      <a id="settings-link" href="./settings" aria-label="Open settings"><span>Settings</span></a>
     </header>
 
     <main>
+      <section class="voice-card">
+      <p class="eyebrow">Your voice, held softly</p>
+      <h1>What’s on your mind?</h1>
+      <p class="intro">Speak naturally. I’m here, listening between the clouds.</p>
       <div id="orb" class="orb state-idle" role="button" tabindex="0" aria-label="Toggle voice">
         <span class="ring"></span>
         <span class="core">
@@ -31,6 +35,7 @@
       </div>
       <p id="caption">tap to talk</p>
       <p id="notice" hidden></p>
+      </section>
       <div id="transcript" aria-live="polite"></div>
     </main>
 
