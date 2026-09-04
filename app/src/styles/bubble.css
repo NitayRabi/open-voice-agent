@@ -31,12 +31,21 @@ body {
   place-items: center;
   cursor: pointer;
   color: #eaf2ff;
-  background: radial-gradient(circle at 38% 34%, #8ad0ff, #2d6cdf 46%, #5a2ea6);
-  box-shadow:
-    0 8px 30px rgba(0, 0, 0, 0.45),
-    inset 0 0 24px rgba(255, 255, 255, 0.12);
+  background: transparent;
+  box-shadow: none;
   transition: background 0.35s ease, transform 0.15s ease;
 }
+.storm-canvas {
+  position: absolute;
+  inset: -18px;
+  width: calc(100% + 36px);
+  height: calc(100% + 36px);
+  pointer-events: none;
+  filter: drop-shadow(0 9px 13px rgba(0, 0, 0, .5));
+}
+.orb:not(.orb-webgl-fallback) > .ring,
+.orb:not(.orb-webgl-fallback) > .core { display: none; }
+.orb:not(.orb-webgl-fallback) { background: transparent !important; }
 .orb:active {
   transform: scale(0.97);
 }
@@ -188,6 +197,7 @@ body {
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.2s ease;
+  z-index: 2;
 }
 .orb:hover #gear {
   opacity: 1;

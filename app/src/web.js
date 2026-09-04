@@ -1,11 +1,13 @@
 import { VoicePipeline } from "./lib/pipeline.js";
 import { getSettings, delegate, listen } from "./lib/tauri.js";
+import { StormOrb } from "./lib/storm-orb.js";
 
 const orb = document.getElementById("orb");
 const caption = document.getElementById("caption");
 const notice = document.getElementById("notice");
 const feed = document.getElementById("transcript");
 const settingsLink = document.getElementById("settings-link");
+const visual = new StormOrb(orb);
 
 // keep the ?token= on the settings link
 const token = new URLSearchParams(location.search).get("token");
@@ -31,21 +33,16 @@ async function loadSettings() {
 }
 
 pipeline.addEventListener("state", (e) => {
-  orb.className = `orb state-${e.detail.state}`;
+  orb.className = `orb state-${e.detail.state}${visual.gl ? "" : " orb-webgl-fallback"}`;
+  visual.setState(e.detail.state);
   caption.textContent = CAPTIONS[e.detail.state] ?? e.detail.state;
 });
 pipeline.addEventListener("output-level", (e) => {
-  if (pipeline.state !== "speaking") return;
-  const r = Math.min(1, e.detail.rms * 4);
-  orb.querySelector(".ring").style.opacity = String(0.2 + r * 0.8);
-  orb.querySelector(".ring").style.transform = `scale(${1 + r * 0.3})`;
+  visual.setOutput(e.detail.rms, e.detail.waveform);
 });
 pipeline.addEventListener("input-level", (e) => {
   if (pipeline.state !== "listening" && pipeline.state !== "user_speaking") return;
-  const r = Math.min(1, e.detail.rms * 6);
-  const ring = orb.querySelector(".ring");
-  ring.style.opacity = String(0.15 + r);
-  ring.style.transform = `scale(${1 + r * 0.25})`;
+  visual.setInput(e.detail.rms, e.detail.waveform);
 });
 pipeline.addEventListener("log", (e) => console.log("[pipeline]", e.detail.msg));
 pipeline.addEventListener("transcript", (e) => addMsg(e.detail.role, e.detail.text));

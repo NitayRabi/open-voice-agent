@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Storm Orb Lab</title>
+    <link rel="stylesheet" href="./styles/orb-lab.css" />
+  </head>
+  <body>
+    <header>
+      <div><span class="eyebrow">Visual test bench</span><h1>Storm Orb Lab</h1></div>
+      <a href="./">Back to voice agent</a>
+    </header>
+
+    <main>
+      <section class="workbench">
+        <div id="hero-orb" class="orb" aria-label="Interactive orb preview"></div>
+        <div class="controls">
+          <label>
+            State
+            <select id="state">
+              <option>idle</option><option>connecting</option><option selected>listening</option>
+              <option>user_speaking</option><option>thinking</option><option>delegating</option>
+              <option>speaking</option><option>error</option>
+            </select>
+          </label>
+          <label>Audio in <output id="input-value">0.00</output><input id="input" type="range" min="0" max="1" step="0.01" value="0" /></label>
+          <label>Audio out <output id="output-value">0.00</output><input id="output" type="range" min="0" max="1" step="0.01" value="0" /></label>
+          <label class="toggle"><input id="animate" type="checkbox" /> Simulate voice cadence</label>
+          <div class="buttons">
+            <button data-preset="input">Input burst</button>
+            <button data-preset="output">Output burst</button>
+            <button data-preset="quiet">Quiet</button>
+          </div>
+          <p class="hint">Input creates a softer breathing wobble. Output drives fast twisting, lightning, and shock rings.</p>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-title"><div><span class="eyebrow">Cases</span><h2>State gallery</h2></div><p>Every tile runs the production renderer.</p></div>
+        <div id="gallery" class="gallery"></div>
+      </section>
+    </main>
+    <script type="module" src="./orb-lab.js"></script>
+  </body>
+</html>

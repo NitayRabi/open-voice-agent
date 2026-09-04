@@ -105,7 +105,8 @@ export class VoicePipeline extends EventTarget {
     this._stream = null;
     this._capture?.disconnect();
     this._playback?.disconnect();
-    this._capture = this._playback = this._micAnalyser = null;
+    this._capture = this._playback = this._micAnalyser = this._outAnalyser = null;
+    cancelAnimationFrame(this._levelRaf);
     if (this._ctx && this._ctx.state !== "closed") this._ctx.close();
     this._ctx = null;
     this._setState("idle");
@@ -149,7 +150,8 @@ export class VoicePipeline extends EventTarget {
     this._capture.port.onmessage = (e) => {
       const d = e.data;
       if (d instanceof ArrayBuffer) this._onMicChunk(d);
-      else if (d?.kind === "level") this._emit("input-level", { rms: d.rms });
+      // UI metering is emitted by the analyser pump below, together with the
+      // actual waveform samples used by the orb boundary.
     };
     micSrc.connect(this._capture);
 
@@ -170,16 +172,23 @@ export class VoicePipeline extends EventTarget {
   }
 
   _startLevelPump() {
-    const buf = new Uint8Array(this._outAnalyser.frequencyBinCount);
+    const outBuf = new Uint8Array(this._outAnalyser.frequencyBinCount);
+    const inBuf = new Uint8Array(this._micAnalyser.frequencyBinCount);
+    const measure = (analyser, buf) => {
+      analyser.getByteTimeDomainData(buf);
+      let sum = 0;
+      const waveform = new Float32Array(128);
+      for (let i = 0; i < buf.length; i++) {
+        const sample = (buf[i] - 128) / 128;
+        sum += sample * sample;
+      }
+      for (let i = 0; i < 128; i++) waveform[i] = (buf[Math.floor(i * buf.length / 128)] - 128) / 128;
+      return { rms: Math.sqrt(sum / buf.length), waveform };
+    };
     const tick = () => {
       if (!this._outAnalyser) return;
-      this._outAnalyser.getByteTimeDomainData(buf);
-      let sum = 0;
-      for (const v of buf) {
-        const s = (v - 128) / 128;
-        sum += s * s;
-      }
-      this._emit("output-level", { rms: Math.sqrt(sum / buf.length) });
+      this._emit("output-level", measure(this._outAnalyser, outBuf));
+      if (this._micAnalyser) this._emit("input-level", measure(this._micAnalyser, inBuf));
       this._levelRaf = requestAnimationFrame(tick);
     };
     tick();

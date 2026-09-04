@@ -47,8 +47,9 @@ main {
 
 .orb {
   position: relative;
-  width: 180px;
-  height: 180px;
+  width: min(260px, 62vw);
+  aspect-ratio: 1;
+  height: auto;
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -59,6 +60,18 @@ main {
   transition: background 0.35s ease, transform 0.12s ease;
   outline: none;
 }
+.storm-canvas {
+  position: absolute;
+  inset: -20%;
+  width: 140%;
+  height: 140%;
+  pointer-events: none;
+  filter: drop-shadow(0 20px 30px rgba(0, 0, 0, .55));
+}
+.orb:not(.orb-webgl-fallback) > .ring,
+.orb:not(.orb-webgl-fallback) > .core { display: none; }
+.orb:not(.orb-webgl-fallback) { background: transparent !important; box-shadow: none; }
+.orb:focus-visible { outline: 2px solid rgba(125, 220, 255, .75); outline-offset: 12px; }
 .orb:active {
   transform: scale(0.98);
 }

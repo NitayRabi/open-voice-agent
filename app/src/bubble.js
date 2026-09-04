@@ -1,9 +1,11 @@
 import { VoicePipeline } from "./lib/pipeline.js";
 import { getSettings, delegate, listen, emit, invoke, currentWindow, hasTauri } from "./lib/tauri.js";
+import { StormOrb } from "./lib/storm-orb.js";
 
 const orb = document.getElementById("orb");
 const gear = document.getElementById("gear");
 const caption = document.getElementById("caption");
+const visual = new StormOrb(orb);
 
 const CAPTIONS = {
   idle: "tap to talk",
@@ -32,23 +34,16 @@ function setCaption(state) {
 
 pipeline.addEventListener("state", (e) => {
   const { state } = e.detail;
-  orb.className = `orb state-${state}${pipeline._muted ? " state-muted" : ""}`;
+  orb.className = `orb state-${state}${pipeline._muted ? " state-muted" : ""}${visual.gl ? "" : " orb-webgl-fallback"}`;
+  visual.setState(state);
   setCaption(state);
 });
 pipeline.addEventListener("output-level", (e) => {
-  const rms = Math.min(1, e.detail.rms * 4);
-  orb.style.setProperty("--lvl", rms.toFixed(3));
-  if (pipeline.state === "speaking") {
-    orb.querySelector(".ring-mid").style.opacity = String(0.2 + rms * 0.8);
-    orb.querySelector(".ring-mid").style.transform = `scale(${1 + rms * 0.25})`;
-  }
+  visual.setOutput(e.detail.rms, e.detail.waveform);
 });
 pipeline.addEventListener("input-level", (e) => {
   if (pipeline.state === "listening" || pipeline.state === "user_speaking") {
-    const rms = Math.min(1, e.detail.rms * 6);
-    const mid = orb.querySelector(".ring-mid");
-    mid.style.opacity = String(0.15 + rms);
-    mid.style.transform = `scale(${1 + rms * 0.2})`;
+    visual.setInput(e.detail.rms, e.detail.waveform);
   }
 });
 pipeline.addEventListener("log", (e) => {
