@@ -7,6 +7,98 @@
     <link rel="stylesheet" href="./styles/settings.css" />
   </head>
   <body>
+    <div id="setup" class="setup" hidden>
+      <div class="setup-card">
+        <div class="setup-progress" aria-label="Setup progress">
+          <i class="active"></i><i></i><i></i><i></i>
+        </div>
+
+        <section class="setup-step active" data-setup-step="0">
+          <div class="setup-mark" aria-hidden="true">♫</div>
+          <p class="eyebrow">First-time setup</p>
+          <h2>Let’s get your voice agent ready</h2>
+          <p>We’ll configure the conversational model, the capable model used for delegated tasks, and verify everything required to start.</p>
+          <div class="pipeline-summary">
+            <span>Parakeet speech recognition</span><b>→</b><span>Your conversational model</span><b>→</b><span>Natural speech</span>
+          </div>
+        </section>
+
+        <section class="setup-step" data-setup-step="1">
+          <p class="eyebrow">Step 1 of 3</p>
+          <h2>Choose the conversational model</h2>
+          <p>This model handles the live conversation. Running a small model locally is the recommended private, low-latency option.</p>
+          <label>
+            <span>Run conversational model</span>
+            <select id="setup_speech_source">
+              <option value="local">Locally on this machine (Recommended)</option>
+              <option value="remote">Remote OpenAI-compatible endpoint</option>
+            </select>
+          </label>
+          <div id="setup_speech_local" class="setup-stack">
+            <label>
+              <span>Local model</span>
+              <select id="setup_speech_model"></select>
+            </label>
+            <div class="row">
+              <button id="setup_download_speech" type="button" class="secondary">Download model</button>
+              <span id="setup_speech_status" class="muted"></span>
+            </div>
+            <details class="setup-advanced">
+              <summary>Advanced: use an existing model file</summary>
+              <label>
+                <span>Absolute GGUF path</span>
+                <input id="setup_speech_path" type="text" spellcheck="false" placeholder="/absolute/path/to/model.gguf" />
+              </label>
+            </details>
+          </div>
+          <div id="setup_speech_remote" class="setup-stack" hidden>
+            <label><span>Endpoint</span><input id="setup_speech_remote_url" type="text" spellcheck="false" placeholder="https://api.openai.com/v1" /></label>
+            <label><span>Model name</span><input id="setup_speech_remote_name" type="text" spellcheck="false" placeholder="Model name required by the endpoint" /></label>
+            <label><span>API key</span><input id="setup_speech_remote_key" type="password" autocomplete="off" placeholder="Optional for a trusted local endpoint" /></label>
+          </div>
+        </section>
+
+        <section class="setup-step" data-setup-step="2">
+          <p class="eyebrow">Step 2 of 3</p>
+          <h2>Configure delegation</h2>
+          <p>When a request needs real work, the voice model hands it to this more capable model.</p>
+          <label>
+            <span>Capable model</span>
+            <select id="setup_brain_source">
+              <option value="remote">Remote OpenAI-compatible endpoint</option>
+              <option value="local">Local downloaded model</option>
+            </select>
+          </label>
+          <div id="setup_brain_remote" class="setup-stack">
+            <label><span>Endpoint</span><input id="setup_brain_url" type="text" spellcheck="false" placeholder="https://api.openai.com/v1" /></label>
+            <label><span>Model name</span><input id="setup_brain_name" type="text" spellcheck="false" placeholder="Model name required by the endpoint" /></label>
+            <label><span>API key</span><input id="setup_brain_key" type="password" autocomplete="off" placeholder="Optional for a trusted local endpoint" /></label>
+          </div>
+          <div id="setup_brain_local" class="setup-stack" hidden>
+            <label><span>Downloaded model</span><select id="setup_brain_model"></select></label>
+            <div class="setup-divider"><span>or</span></div>
+            <label><span>Use an existing GGUF on this machine</span><input id="setup_brain_path" type="text" spellcheck="false" placeholder="/absolute/path/to/model.gguf" /></label>
+            <label><span>llama-server executable</span><input id="setup_llama_server" type="text" spellcheck="false" placeholder="llama-server or /absolute/path/to/llama-server" /></label>
+            <p class="muted">You can use the same GGUF for conversation and delegation, or install another model from the Models tab.</p>
+          </div>
+        </section>
+
+        <section class="setup-step" data-setup-step="3">
+          <p class="eyebrow">Step 3 of 3</p>
+          <h2>Ready to start</h2>
+          <div id="setup_review" class="setup-review"></div>
+          <p class="muted">The voice engine will start automatically. You can change the conversational model or delegation provider later in Settings.</p>
+        </section>
+
+        <p id="setup_error" class="setup-error" role="alert" hidden></p>
+        <div class="setup-actions">
+          <button id="setup_back" type="button" class="secondary" hidden>Back</button>
+          <span class="spacer"></span>
+          <button id="setup_next" type="button" class="primary">Get started</button>
+        </div>
+      </div>
+    </div>
+
     <header>
       <h1>Open Voice Agent</h1>
       <span id="version" class="muted"></span>
@@ -16,7 +108,6 @@
       <button data-tab="speech" class="active">Speech</button>
       <button data-tab="delegation">Delegation</button>
       <button data-tab="models">Models</button>
-      <button data-tab="engine">Engines</button>
       <button data-tab="web">Web</button>
       <button data-tab="log">Log</button>
     </nav>
@@ -24,22 +115,30 @@
     <main>
       <!-- SPEECH -->
       <section id="tab-speech" class="tab active">
+        <p class="muted">Voice runs through the built-in Parakeet → conversational model → speech pipeline.</p>
         <label>
-          <span>Backend</span>
-          <select id="backend_mode">
-            <option value="hf_realtime">Hugging Face speech-to-speech (Realtime WS cascade)</option>
-            <option value="voicechat_http">VoiceChat 11B (turn-based HTTP)</option>
+          <span>Run conversational model</span>
+          <select id="speech_model_source">
+            <option value="local">Locally on this machine (Recommended)</option>
+            <option value="remote">Remote OpenAI-compatible endpoint</option>
           </select>
         </label>
-        <label data-mode="hf_realtime">
-          <span>Realtime WebSocket URL</span>
-          <input id="server_url" type="text" spellcheck="false" placeholder="ws://127.0.0.1:8765/v1/realtime" />
-          <small>Where <code>speech-to-speech serve</code> is listening (<code>/v1/realtime</code>).</small>
-        </label>
-        <label data-mode="voicechat_http">
-          <span>VoiceChat base URL</span>
-          <input id="voicechat_url" type="text" spellcheck="false" placeholder="https://127.0.0.1:8999" />
-        </label>
+        <div data-speech-source="local">
+          <label>
+            <span>Conversational model</span>
+            <select id="speech_model"></select>
+            <small>Install additional compatible models from the Models tab.</small>
+          </label>
+          <details class="add-model">
+            <summary>Advanced: use an existing model file</summary>
+            <label><span>Absolute GGUF path</span><input id="speech_model_path" type="text" spellcheck="false" placeholder="/absolute/path/to/model.gguf" /></label>
+          </details>
+        </div>
+        <div data-speech-source="remote">
+          <label><span>Endpoint</span><input id="speech_remote_base_url" type="text" spellcheck="false" placeholder="https://api.openai.com/v1" /></label>
+          <label><span>Model name</span><input id="speech_remote_model" type="text" spellcheck="false" placeholder="Model name required by the endpoint" /></label>
+          <label><span>API key</span><input id="speech_remote_api_key" type="password" autocomplete="off" placeholder="Optional for a trusted local endpoint" /></label>
+        </div>
         <label>
           <span>Voice</span>
           <select id="voice">
@@ -170,11 +269,14 @@
           the app data dir), or use a remote endpoint instead (Delegation tab). Downloads
           resume and are verified.
         </p>
-        <label>
-          <span>Hugging Face token</span>
-          <input id="hf_token" type="password" autocomplete="off" spellcheck="false"
-            placeholder="(optional — needed for gated repos like Gemma)" />
-        </label>
+        <details class="add-model">
+          <summary>Advanced: Hugging Face authentication</summary>
+          <p class="muted">The built-in models, including Gemma 4 E4B, do not require a token. Add one only for a private or separately gated repository, or if anonymous download limits become a problem.</p>
+          <label>
+            <span>Hugging Face token (optional)</span>
+            <input id="hf_token" type="password" autocomplete="off" spellcheck="false" />
+          </label>
+        </details>
 
         <details class="add-model">
           <summary>Add a model</summary>
@@ -190,47 +292,6 @@
         </details>
 
         <div id="model_list" class="model-list"></div>
-      </section>
-
-      <!-- ENGINE -->
-      <section id="tab-engine" class="tab">
-        <p class="muted">
-          Let the app supervise the speech backend process. Engine knobs (STT device, LLM
-          binary/model, TTS backend, quant) go through as environment variables — the same
-          ones <code>hf-s2s/run-comparison.sh</code> and <code>run.sh</code> read.
-        </p>
-        <div class="row presets">
-          <span>Presets:</span>
-          <button data-preset="hf" class="secondary">HF cascade (Parakeet→Gemma→Qwen3-TTS)</button>
-          <button data-preset="vc4" class="secondary">VoiceChat Q4_0</button>
-          <button data-preset="vc8" class="secondary">VoiceChat Q8_0</button>
-        </div>
-        <label class="check">
-          <input id="manage_backend" type="checkbox" />
-          <span>Start / stop the speech backend from this app</span>
-        </label>
-        <label>
-          <span>Launch command</span>
-          <input id="launch_command" type="text" spellcheck="false" />
-          <small>Space-separated. Run relative to the working directory below.</small>
-        </label>
-        <label>
-          <span>Working directory</span>
-          <input id="launch_cwd" type="text" spellcheck="false" placeholder="(repo root, guessed)" />
-        </label>
-        <label>
-          <span>Health URL</span>
-          <input id="health_url" type="text" spellcheck="false" placeholder="http://127.0.0.1:8766/" />
-        </label>
-        <label>
-          <span>Engine environment (KEY=VALUE per line)</span>
-          <textarea id="launch_env" rows="8" spellcheck="false"></textarea>
-        </label>
-        <div class="row">
-          <button id="backend_start" class="secondary">Start backend</button>
-          <button id="backend_stop" class="secondary">Stop backend</button>
-          <span id="backend_state" class="muted">unknown</span>
-        </div>
       </section>
 
       <!-- WEB -->
@@ -258,10 +319,13 @@
           </label>
         </div>
         <label>
-          <span>Access token</span>
-          <input id="web_token" type="password" autocomplete="off" spellcheck="false"
-            placeholder="(blank = no auth; required-ish when bound to 0.0.0.0)" />
-          <small>Sent as <code>?token=…</code>, <code>Authorization: Bearer</code>, or a cookie.</small>
+          <span>Browser pairing code</span>
+          <div class="row">
+            <input id="web_token" type="text" autocomplete="off" spellcheck="false"
+              placeholder="(blank = no authentication)" />
+            <button id="generate_web_token" type="button" class="secondary">Generate</button>
+          </div>
+          <small>Browsers enter this once on the pairing screen, then stay signed in with a secure cookie. API clients can use it as a bearer token.</small>
         </label>
         <label>
           <span>TLS certificate (PEM path)</span>
@@ -296,7 +360,6 @@
       <span id="status" class="muted"></span>
       <div class="spacer"></div>
       <button id="save" class="primary">Save</button>
-      <button id="save_restart" class="primary">Save &amp; restart speech</button>
     </footer>
 
     <script type="module" src="./settings.js"></script>

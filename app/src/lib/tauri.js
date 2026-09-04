@@ -6,14 +6,8 @@ const T = globalThis.__TAURI__;
 export const hasTauri = !!T;
 export const isWeb = !hasTauri;
 
-// carry ?token=… through to fetch/EventSource when the web server requires it
-const TOKEN = new URLSearchParams(location.search).get("token") || "";
-const withToken = (url) => {
-  if (!TOKEN) return url;
-  return url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOKEN);
-};
 async function api(path, { method = "GET", body } = {}) {
-  const res = await fetch(withToken(path), {
+  const res = await fetch(path, {
     method,
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
@@ -35,7 +29,7 @@ const WEB = {
   backend_stop: () => api("/api/backend/stop", { method: "POST" }),
   web_url: () => Promise.resolve(location.origin + "/"),
   show_settings: () => {
-    location.href = withToken("/settings");
+    location.href = "/settings";
   },
   models_list: () => api("/api/models"),
   model_add: ({ spec }) => api("/api/models/add", { method: "POST", body: spec }),
@@ -43,6 +37,8 @@ const WEB = {
   model_cancel: ({ id }) => api("/api/models/cancel", { method: "POST", body: { id } }),
   model_remove: ({ id }) => api("/api/models/remove", { method: "POST", body: { id } }),
   model_forget: ({ id }) => api("/api/models/forget", { method: "POST", body: { id } }),
+  model_resolve: ({ idOrPath }) =>
+    api("/api/models/resolve", { method: "POST", body: { id_or_path: idOrPath } }).then((d) => d.path),
 };
 
 export async function invoke(cmd, args = {}) {

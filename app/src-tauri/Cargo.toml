@@ -28,6 +28,7 @@ include_dir = "0.7"
 urlencoding = "2"
 sha2 = "0.10"
 hex = "0.4"
+rand = "0.8"
 
 [features]
 # by default Tauri runs in production mode unless `tauri dev` is used

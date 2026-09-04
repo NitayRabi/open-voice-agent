@@ -9,10 +9,6 @@ const feed = document.getElementById("transcript");
 const settingsLink = document.getElementById("settings-link");
 const visual = new StormOrb(orb);
 
-// keep the ?token= on the settings link
-const token = new URLSearchParams(location.search).get("token");
-if (token) settingsLink.href = `./settings?token=${encodeURIComponent(token)}`;
-
 const CAPTIONS = {
   idle: "tap to talk",
   connecting: "connecting…",
@@ -29,6 +25,10 @@ let settings = null;
 
 async function loadSettings() {
   settings = await getSettings();
+  if (!settings.setup_completed) {
+    location.replace("/settings?setup=1");
+    return;
+  }
   pipeline.configure(settings);
 }
 

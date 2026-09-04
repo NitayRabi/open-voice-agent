@@ -7,6 +7,7 @@ mod localbrain;
 mod webserver;
 
 use parking_lot::Mutex;
+use rand::{distributions::Alphanumeric, Rng};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
@@ -38,8 +39,28 @@ fn get_settings(state: State<'_, AppState>) -> Settings {
 fn save_settings(
     app: AppHandle,
     state: State<'_, AppState>,
-    settings: Settings,
+    mut settings: Settings,
 ) -> Result<(), String> {
+    settings.server_url = "ws://127.0.0.1:8766/v1/realtime".into();
+    if settings.web_enabled
+        && settings.web_bind.trim() != "127.0.0.1"
+        && settings.web_token.trim().is_empty()
+    {
+        settings.web_token = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(20)
+            .map(char::from)
+            .collect();
+    }
+    let backend_changed = {
+        let previous = state.settings.lock();
+        previous.speech_model != settings.speech_model
+            || previous.speech_model_source != settings.speech_model_source
+            || previous.speech_remote_base_url != settings.speech_remote_base_url
+            || previous.speech_remote_model != settings.speech_remote_model
+            || previous.speech_remote_api_key != settings.speech_remote_api_key
+    };
+    let keep_backend_running = settings.manage_backend;
     settings.save(&app).map_err(|e| e.to_string())?;
     let hk = settings.hotkey.clone();
     let web_changed = !state.settings.lock().web_config_eq(&settings);
@@ -47,6 +68,13 @@ fn save_settings(
     hotkey::apply(&app, &hk)?;
     if web_changed {
         apply_web(&app);
+    }
+    if backend_changed && state.backend.is_running() {
+        state.backend.stop(&app);
+        if keep_backend_running {
+            let cfg = state.settings.lock().clone();
+            state.backend.start(&app, &cfg)?;
+        }
     }
     state.brain_server.reconcile(&app);
     app.emit("settings-changed", ()).ok();
@@ -146,6 +174,14 @@ fn model_forget(app: AppHandle, state: State<'_, AppState>, id: String) -> Resul
 }
 
 #[tauri::command]
+fn model_resolve(app: AppHandle, state: State<'_, AppState>, id_or_path: String) -> Option<String> {
+    state
+        .assets
+        .resolve(&app, &id_or_path)
+        .map(|p| p.display().to_string())
+}
+
+#[tauri::command]
 fn show_settings(app: AppHandle) {
     open_settings(&app);
 }
@@ -190,15 +226,13 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let toggle_speech = MenuItem::with_id(app, "toggle_speech", "Toggle speech", true, None::<&str>)?;
     let bubble = MenuItem::with_id(app, "toggle_bubble", "Show / hide bubble", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
-    let be_start = MenuItem::with_id(app, "backend_start", "Start speech backend", true, None::<&str>)?;
-    let be_stop = MenuItem::with_id(app, "backend_stop", "Stop speech backend", true, None::<&str>)?;
     let web_open = MenuItem::with_id(app, "web_open", "Open web UI", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[
-            &toggle_speech, &bubble, &settings, &sep, &be_start, &be_stop, &web_open, &sep, &quit,
+            &toggle_speech, &bubble, &settings, &sep, &web_open, &sep, &quit,
         ],
     )?;
 
@@ -216,16 +250,6 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             }
             "toggle_bubble" => toggle_bubble(app),
             "settings" => open_settings(app),
-            "backend_start" => {
-                let state = app.state::<AppState>();
-                let cfg = state.settings.lock().clone();
-                if let Err(e) = state.backend.start(app, &cfg) {
-                    let _ = app.emit("backend-log", format!("[app] start failed: {e}"));
-                }
-            }
-            "backend_stop" => {
-                app.state::<AppState>().backend.stop(app);
-            }
             "web_open" => {
                 let state = app.state::<AppState>();
                 let url = state.web.url().or_else(|| state.web.start(app).ok());
@@ -282,6 +306,7 @@ pub fn run() {
             model_cancel,
             model_remove,
             model_forget,
+            model_resolve,
             show_settings,
             app_version,
             quit_app,
@@ -293,6 +318,7 @@ pub fn run() {
             let manage_backend = settings.manage_backend;
 
             let web_enabled = settings.web_enabled;
+            let setup_completed = settings.setup_completed;
             let local_brain = settings.brain_source == "local" && settings.delegation_enabled;
             app.manage(AppState {
                 settings: Mutex::new(settings),
@@ -306,6 +332,13 @@ pub fn run() {
                 eprintln!("[hotkey] {e}");
             }
             build_tray(&handle)?;
+
+            if !setup_completed {
+                open_settings(&handle);
+                if let Some(bubble) = app.get_webview_window("bubble") {
+                    let _ = bubble.hide();
+                }
+            }
 
             if manage_backend {
                 let state = handle.state::<AppState>();

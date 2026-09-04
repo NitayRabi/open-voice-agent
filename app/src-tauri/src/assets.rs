@@ -183,6 +183,7 @@ impl AssetManager {
                     "url": m.resolved_url(),
                     "installed": on_disk.is_some(),
                     "bytes_on_disk": on_disk,
+                    "path": on_disk.and_then(|_| file.as_ref().map(|p| p.display().to_string())),
                     "partial_bytes": part,
                     "downloading": job.is_some(),
                     "job": job,

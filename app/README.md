@@ -14,7 +14,7 @@ task to the brain and speaks back the answer.
 ```
  bubble window ─┐                 ws://…/v1/realtime     ┌─ speech-to-speech serve ─┐
  browser  /     ├─ VoicePipeline ───────────────────────▶│  VAD · STT · LLM · TTS    │
- browser  :port ┘  mic + playback ◀──────────────────────│  (or VoiceChat 11B)       │
+ browser  :port ┘  mic + playback ◀──────────────────────│  Parakeet · LLM · TTS   │
         │           (same JS, either Tauri IPC or /api)  └──────────────────────────┘
         │ voice model calls delegate_task(request)
         ▼
@@ -30,7 +30,7 @@ task to the brain and speaks back the answer.
 | `src/` | frontend (no bundler — plain ES modules, `withGlobalTauri`) |
 | `src/bubble.html` · `bubble.js` | the floating always-on-top orb (desktop) |
 | `src/web.html` · `web.js` | the same orb as a full-page web app (served over HTTP) |
-| `src/index.html` · `settings.js` | settings screen (Speech / Delegation / Engines / Web / Log) |
+| `src/index.html` · `settings.js` | first-run setup and settings (Speech / Delegation / Models / Web / Log) |
 | `src/lib/tauri.js` | dual bridge — Tauri IPC in the app, `/api` + long-poll in a browser |
 | `src/lib/pipeline.js` | mic → realtime WS → speaker, VAD turns, tool-call delegation |
 | `src/worklets/` | 16 kHz mic capture + jitter-buffered playback (adapted from `huggingface/speech-to-speech`, Apache-2.0) |
@@ -50,23 +50,19 @@ task to the brain and speaks back the answer.
   (idle / connecting / listening / speaking / thinking / delegating / error).
 - **Global hotkey** — default `Ctrl/Cmd+Shift+Space`, editable in Settings.
   A press just emits `speech-toggle`; the bubble starts/stops the mic.
-- **Settings screen** — speech backend + URL, voice, sample rate, mic, noise
-  gate, the voice model's system prompt, hotkey; the brain endpoint / model /
-  key / prompt; and engine launch presets. A Log tab tails the backend and the
-  running transcript.
-- **Two speech backends**
-  - `hf_realtime` *(default)* — OpenAI-Realtime WS cascade from
-    `speech-to-speech serve`. Server-side VAD drives the turns.
-  - `voicechat_http` — the turn-based `POST /turn` + SSE protocol from
-    `voicechat/vc_openclaw.py`, with client-side VAD.
+- **Required first-run setup** — shared by Tauri and browser clients. It selects
+  a recommended local conversational model (or a remote OpenAI-compatible
+  endpoint), configures delegation, validates the required fields, and starts
+  the voice engine.
+- **One speech pipeline** — Parakeet STT → a selectable conversational LLM →
+  Qwen3-TTS over the OpenAI-Realtime event set. Backend processes, ports, and
+  environment variables are implementation details.
 - **Delegation** — when the voice model calls `delegate_task` the app
   acknowledges instantly ("on it"), calls the brain off the critical path, then
   feeds the answer back so the voice model speaks it. Toggle
   *speak the result* off for a bare ack.
-- **Engine parity** — the *Engines* tab starts/stops the speech backend with the
-  same environment knobs `hf-s2s/run-comparison.sh` and `run.sh` read
-  (`HF_S2S_LLM_MODEL`, `HF_S2S_*_PORT`, `--quant`, …). Presets for the HF
-  cascade and VoiceChat Q4/Q8.
+- **Automatic engine lifecycle** — after setup, the app starts the fixed speech
+  pipeline automatically and injects the selected conversational model.
 - **Models** — download GGUF weights on demand (nothing ships in the installer);
   see [What ships vs. what you download](#what-ships-vs-what-you-download).
 - **Web UI** — the *Web* tab turns on an embedded server that serves the exact
@@ -83,7 +79,7 @@ Settings → **Web**:
 |---|---|
 | Bind address | `127.0.0.1` (this machine) or `0.0.0.0` (the LAN) |
 | Port | default `1730` |
-| Access token | sent as `?token=`, `Authorization: Bearer`, or an `ova_token` cookie. Use one when binding to `0.0.0.0`. |
+| Pairing code | browsers enter it once on the pairing screen and receive a secure HttpOnly cookie; API clients send it as `Authorization: Bearer`. The app can generate one when binding to `0.0.0.0`. |
 | TLS cert / key | PEM paths. **Required for microphone access from anything but `localhost`** — browsers gate `getUserMedia` on a secure context. `openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=$(hostname)"` |
 
 Without TLS the config screen still works from any device; only the mic needs
@@ -112,7 +108,7 @@ endpoint. Same pattern as the whisper.cpp desktop apps.
 | app + web UI + icons + catalog | ✅ in the installer | — |
 | **brain** LLM | ❌ | *Delegation → remote endpoint* (OpenAI / HF / your server), **or** *local* — download a GGUF from the **Models** tab and the app runs `llama-server` on it |
 | speech STT + TTS (HF cascade) | ❌ | `speech-to-speech serve` auto-fetches them into the HF cache on first run |
-| speech LLM GGUF (HF cascade) | ❌ | *Models* tab — the downloaded path feeds `HF_S2S_LLM_MODEL` (Engines tab) |
+| conversational LLM | ❌ | choose a catalog GGUF in first-run setup / *Models*, use an existing GGUF under **Advanced**, or configure a remote OpenAI-compatible endpoint |
 | `llama-server` / `speech-to-speech` runtimes | ❌ | you install them; the app calls the binary/URL you point it at |
 
 ### Models tab
@@ -122,7 +118,9 @@ endpoint. Same pattern as the whisper.cpp desktop apps.
 - Downloads stream to `<id>.gguf.part`, **resume** via HTTP `Range`, verify the
   GGUF magic (and sha256 when the catalog gives one), then rename into place.
   Progress rides the `asset-progress` event; **Cancel** / **Delete** / **Forget**.
-- Gated repos (Gemma): paste a **Hugging Face token** at the top of the tab.
+- The curated models, including Gemma 4 E4B, download without a Hugging Face
+  token. Optional authentication is under **Advanced** for private/custom repos
+  and anonymous rate-limit issues.
 
 ### Configuring the brain
 
@@ -163,12 +161,11 @@ cargo tauri build                    # .deb / .rpm / .AppImage
 cd src-tauri && cargo build --release && ./target/release/open-voice-agent
 ```
 
-Then bring up a speech backend (or let the *Engines* tab do it):
+First-run setup starts the speech pipeline automatically. For low-level
+development outside the app, it can still be launched directly:
 
 ```bash
-bash hf-s2s/run-comparison.sh        # ws://127.0.0.1:8765/v1/realtime
-# or
-./run.sh --quant Q4_0 --port 8999
+bash hf-s2s/run-comparison.sh        # ws://127.0.0.1:8766/v1/realtime
 ```
 
 ## Verified
@@ -185,9 +182,5 @@ download (headless box; the models own the GPU).
 
 ## Known limitations
 
-- **`voicechat_http` + self-signed TLS** — `vc_openclaw.py` forces HTTPS with a
-  self-signed cert, which WebKitGTK rejects. Run VoiceChat behind a trusted cert
-  or a localhost `http://` proxy. The default `hf_realtime` mode uses plaintext
-  `ws://` on localhost and is unaffected.
 - The brain call is **non-streaming** (`stream: false`) — the answer arrives
   whole, then is spoken. Fine for one or two sentences; a long answer waits.

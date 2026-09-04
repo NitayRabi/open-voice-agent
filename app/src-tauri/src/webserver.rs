@@ -234,9 +234,6 @@ fn authorized(req: &Request, token: &str) -> bool {
     if token.is_empty() {
         return true;
     }
-    if query_param(req.url(), "token").as_deref() == Some(token) {
-        return true;
-    }
     let cookie_needle = format!("ova_token={token}");
     for h in req.headers() {
         let v = h.value.as_str();
@@ -253,6 +250,117 @@ fn authorized(req: &Request, token: &str) -> bool {
     false
 }
 
+fn form_param(body: &str, key: &str) -> Option<String> {
+    for pair in body.split('&') {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        if urlencoding::decode(k).ok()?.as_ref() == key {
+            let value = v.replace('+', " ");
+            return Some(
+                urlencoding::decode(&value)
+                    .map(|s| s.into_owned())
+                    .unwrap_or_default(),
+            );
+        }
+    }
+    None
+}
+
+fn safe_next(raw: &str) -> String {
+    if raw.starts_with('/') && !raw.starts_with("//") && !raw.contains(['\r', '\n']) {
+        raw.to_string()
+    } else {
+        "/".to_string()
+    }
+}
+
+fn html_attr(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn pair_page(next: &str, invalid: bool) -> String {
+    let error = if invalid {
+        r#"<p class="error" role="alert">That pairing code is not valid.</p>"#
+    } else {
+        ""
+    };
+    format!(
+        r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pair — Open Voice Agent</title>
+  <style>
+    :root {{ color-scheme: dark; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px;
+      background: radial-gradient(900px 600px at 50% -10%, #17203a, #0b0c10 65%); color: #e8e8ea; }}
+    main {{ width: min(420px, 100%); padding: 32px; border: 1px solid #2b3550; border-radius: 18px;
+      background: rgba(18, 21, 29, .94); box-shadow: 0 24px 80px rgba(0,0,0,.45); }}
+    .mark {{ width: 54px; height: 54px; display: grid; place-items: center; margin-bottom: 20px;
+      border-radius: 50%; font-size: 24px; background: linear-gradient(145deg, #5f7cff, #7048b8); }}
+    h1 {{ margin: 0 0 8px; font-size: 1.45rem; }}
+    p {{ margin: 0 0 22px; color: #aeb8ca; line-height: 1.5; }}
+    label {{ display: block; margin-bottom: 8px; font-size: .9rem; font-weight: 600; }}
+    input {{ width: 100%; padding: 13px 14px; border: 1px solid #39445e; border-radius: 10px;
+      background: #0d1017; color: #fff; font: inherit; letter-spacing: .05em; outline: none; }}
+    input:focus {{ border-color: #7890ff; box-shadow: 0 0 0 3px rgba(120,144,255,.18); }}
+    button {{ width: 100%; margin-top: 14px; padding: 13px; border: 0; border-radius: 10px;
+      background: #6983ff; color: white; font: inherit; font-weight: 650; cursor: pointer; }}
+    button:hover {{ background: #7b92ff; }}
+    .error {{ margin: 0 0 14px; color: #ff9f9f; font-size: .9rem; }}
+    small {{ display: block; margin-top: 16px; color: #798397; line-height: 1.4; }}
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark" aria-hidden="true">&#9835;</div>
+    <h1>Pair with Open Voice Agent</h1>
+    <p>Enter the pairing code shown in the desktop app. This browser will stay paired.</p>
+    {error}
+    <form method="post" action="/pair">
+      <input type="hidden" name="next" value="{}">
+      <label for="pairing_code">Pairing code</label>
+      <input id="pairing_code" name="pairing_code" type="password" autocomplete="one-time-code"
+        autocapitalize="none" spellcheck="false" autofocus required>
+      <button type="submit">Pair browser</button>
+    </form>
+    <small>You can change the code from Settings → Web. Changing it signs out previously paired browsers.</small>
+  </main>
+</body>
+</html>"#,
+        html_attr(&safe_next(next))
+    )
+}
+
+fn serve_pair(req: Request, next: &str, invalid: bool) -> io::Result<()> {
+    let status = if invalid { 401 } else { 200 };
+    let mut resp = Response::from_string(pair_page(next, invalid)).with_status_code(status);
+    resp.add_header(header("Content-Type", "text/html; charset=utf-8"));
+    for h in security_headers() {
+        resp.add_header(h);
+    }
+    req.respond(resp)
+}
+
+fn pair_success(req: Request, cfg: &Settings, next: &str) -> io::Result<()> {
+    let mut resp = Response::empty(303);
+    resp.add_header(header("Location", &safe_next(next)));
+    let secure = if cfg.web_tls_cert.trim().is_empty() { "" } else { "; Secure" };
+    resp.add_header(header(
+        "Set-Cookie",
+        &format!(
+            "ova_token={}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000{secure}",
+            cfg.web_token
+        ),
+    ));
+    req.respond(resp)
+}
+
 fn path_of(url: &str) -> &str {
     url.split(['?', '#']).next().unwrap_or("/")
 }
@@ -263,24 +371,83 @@ fn read_body(req: &mut Request) -> Value {
     serde_json::from_str(&s).unwrap_or(Value::Null)
 }
 
+fn browser_settings(req: &Request, cfg: &Settings) -> Settings {
+    let mut out = cfg.clone();
+    let raw_host = req
+        .headers()
+        .iter()
+        .find(|h| h.field.equiv("Host"))
+        .map(|h| h.value.as_str())
+        .unwrap_or("127.0.0.1");
+    let host = if raw_host.starts_with('[') {
+        raw_host
+            .split_once(']')
+            .map(|(h, _)| format!("{h}]"))
+            .unwrap_or_else(|| raw_host.to_string())
+    } else {
+        raw_host
+            .rsplit_once(':')
+            .filter(|(_, port)| port.parse::<u16>().is_ok())
+            .map(|(host, _)| host.to_string())
+            .unwrap_or_else(|| raw_host.to_string())
+    };
+    let secure = !cfg.web_tls_cert.trim().is_empty();
+    let scheme = if secure { "wss" } else { "ws" };
+    let port = cfg
+        .launch_env
+        .get("HF_S2S_WSS_PORT")
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(8765);
+    out.server_url = format!("{scheme}://{host}:{port}/v1/realtime");
+    out
+}
+
 fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: Request) {
     let cfg = app.state::<AppState>().settings.lock().clone();
-
-    if !authorized(&req, &cfg.web_token) {
-        let _ = req.respond(json_response(json!({ "error": "unauthorized" }), 401));
-        return;
-    }
-
     let method = req.method().clone();
     let url = req.url().to_string();
     let path = path_of(&url).to_string();
     let is_get = matches!(method, Method::Get | Method::Head);
 
+    if path == "/pair" {
+        let result = match method {
+            Method::Post => {
+                let mut body = String::new();
+                let _ = req.as_reader().read_to_string(&mut body);
+                let code = form_param(&body, "pairing_code").unwrap_or_default();
+                let next = form_param(&body, "next").unwrap_or_else(|| "/".into());
+                if cfg.web_token.is_empty() || code == cfg.web_token {
+                    pair_success(req, &cfg, &next)
+                } else {
+                    serve_pair(req, &next, true)
+                }
+            }
+            Method::Get | Method::Head => {
+                let next = query_param(&url, "next").unwrap_or_else(|| "/".into());
+                serve_pair(req, &next, false)
+            }
+            _ => req.respond(json_response(json!({ "error": "method not allowed" }), 405)),
+        };
+        let _ = result;
+        return;
+    }
+
+    if !authorized(&req, &cfg.web_token) {
+        let result = if is_get && !path.starts_with("/api/") {
+            serve_pair(req, &path, false)
+        } else {
+            req.respond(json_response(json!({ "error": "unauthorized" }), 401))
+        };
+        let _ = result;
+        return;
+    }
+
     let _ = match (method, path.as_str()) {
         (_, "/api/events") if is_get => serve_events(events, stop, &url, req),
 
         (_, "/api/settings") if is_get => {
-            req.respond(json_response(serde_json::to_value(&cfg).unwrap_or(Value::Null), 200))
+            let value = serde_json::to_value(browser_settings(&req, &cfg)).unwrap_or(Value::Null);
+            req.respond(json_response(value, 200))
         }
         (Method::Post, "/api/settings") => {
             let body = read_body(&mut req);
@@ -328,6 +495,19 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
         }
         (_, "/api/models") if is_get => {
             req.respond(json_response(app.state::<AppState>().assets.list(app), 200))
+        }
+        (Method::Post, "/api/models/resolve") => {
+            let body = read_body(&mut req);
+            let id_or_path = body
+                .get("id_or_path")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let path = app
+                .state::<AppState>()
+                .assets
+                .resolve(app, id_or_path)
+                .map(|p| p.display().to_string());
+            req.respond(json_response(json!({ "path": path }), 200))
         }
         (Method::Post, "/api/models/add") => {
             let body = read_body(&mut req);
@@ -387,7 +567,7 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
             }
         }
 
-        (_, _) if is_get => serve_static(&path, &url, &cfg, req),
+        (_, _) if is_get => serve_static(&path, req),
 
         _ => req.respond(json_response(json!({ "error": "not found" }), 404)),
     };
@@ -431,7 +611,7 @@ fn mime_for(path: &str) -> &'static str {
     }
 }
 
-fn serve_static(path: &str, url: &str, cfg: &Settings, req: Request) -> io::Result<()> {
+fn serve_static(path: &str, req: Request) -> io::Result<()> {
     let rel = match path {
         "/" | "" => "web.html",
         "/settings" | "/settings/" => "index.html",
@@ -448,15 +628,32 @@ fn serve_static(path: &str, url: &str, cfg: &Settings, req: Request) -> io::Resu
     for h in security_headers() {
         resp.add_header(h);
     }
-    if !cfg.web_token.is_empty() {
-        if let Some(t) = query_param(url, "token") {
-            if t == cfg.web_token {
-                resp.add_header(header(
-                    "Set-Cookie",
-                    &format!("ova_token={t}; Path=/; SameSite=Strict; Max-Age=2592000"),
-                ));
-            }
-        }
-    }
     req.respond(resp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{form_param, pair_page, safe_next};
+
+    #[test]
+    fn parses_pairing_form() {
+        let body = "pairing_code=a%2Bb+code&next=%2Fsettings";
+        assert_eq!(form_param(body, "pairing_code").as_deref(), Some("a+b code"));
+        assert_eq!(form_param(body, "next").as_deref(), Some("/settings"));
+    }
+
+    #[test]
+    fn pairing_redirect_stays_on_this_origin() {
+        assert_eq!(safe_next("/settings"), "/settings");
+        assert_eq!(safe_next("//example.com"), "/");
+        assert_eq!(safe_next("https://example.com"), "/");
+        assert_eq!(safe_next("/\r\nLocation: bad"), "/");
+    }
+
+    #[test]
+    fn pairing_page_escapes_next_path() {
+        let html = pair_page("/settings?x=\"<", false);
+        assert!(html.contains("value=\"/settings?x=&quot;&lt;\""));
+        assert!(!html.contains("value=\"/settings?x=\"<\""));
+    }
 }

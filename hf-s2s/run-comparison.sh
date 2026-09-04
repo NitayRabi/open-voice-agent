@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Hugging Face cascaded voice-agent comparison: Parakeet -> Gemma E4B -> Qwen3-TTS.
+# Cascaded voice agent: Parakeet -> local or remote conversational model -> Qwen3-TTS.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -14,6 +14,9 @@ LAN_UI_PORT="${HF_S2S_LAN_UI_PORT:-9001}"
 LLM_PORT="${HF_S2S_LLM_PORT:-8011}"
 LLM_BIN="${HF_S2S_LLM_BIN:-/home/nitayrabi/llama.cpp/build-hip/bin/llama-server}"
 LLM_MODEL="${HF_S2S_LLM_MODEL:-/home/nitayrabi/models/gemma-4-E4B_q4_0-it.gguf}"
+LLM_BASE_URL="${HF_S2S_LLM_BASE_URL:-}"
+LLM_NAME="${HF_S2S_LLM_NAME:-local-conversation}"
+LLM_API_KEY="${HF_S2S_LLM_API_KEY:-}"
 TTS_MODEL="${HF_S2S_TTS_MODEL:-Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice}"
 TTS_HIP_BIN="${HF_S2S_TTS_HIP_BIN:-$ROOT/.tmp/qwen3-tts-hip/target/release/tts-server}"
 TTS_HIP_MODEL_DIR="${HF_S2S_TTS_HIP_MODEL_DIR:-/home/nitayrabi/.cache/huggingface/hub/models--Qwen--Qwen3-TTS-12Hz-0.6B-CustomVoice/snapshots/85e237c12c027371202489a0ec509ded67b5e4b5}"
@@ -32,22 +35,26 @@ trap cleanup EXIT INT TERM
 
 cd "$UPSTREAM"
 
-"$LLM_BIN" \
-  --model "$LLM_MODEL" --alias gemma-e4b \
-  --host 127.0.0.1 --port "$LLM_PORT" --ctx-size 4096 --parallel 1 \
-  --gpu-layers all --flash-attn on --reasoning off --no-webui &
-children+=("$!")
+if [[ -z "$LLM_BASE_URL" ]]; then
+  "$LLM_BIN" \
+    --model "$LLM_MODEL" --alias "$LLM_NAME" \
+    --host 127.0.0.1 --port "$LLM_PORT" --ctx-size 4096 --parallel 1 \
+    --gpu-layers all --flash-attn on --reasoning off --no-webui &
+  llm_pid="$!"
+  children+=("$llm_pid")
 
-for _ in $(seq 1 120); do
-  if curl -fsS "http://127.0.0.1:${LLM_PORT}/health" >/dev/null 2>&1; then
-    break
-  fi
-  if ! kill -0 "${children[0]}" 2>/dev/null; then
-    echo "Gemma E4B exited during startup" >&2
-    exit 1
-  fi
-  sleep 0.5
-done
+  for _ in $(seq 1 120); do
+    if curl -fsS "http://127.0.0.1:${LLM_PORT}/health" >/dev/null 2>&1; then
+      break
+    fi
+    if ! kill -0 "$llm_pid" 2>/dev/null; then
+      echo "Local conversational model exited during startup" >&2
+      exit 1
+    fi
+    sleep 0.5
+  done
+  LLM_BASE_URL="http://127.0.0.1:${LLM_PORT}/v1"
+fi
 
 LD_LIBRARY_PATH="/lib64:${LD_LIBRARY_PATH:-}" \
   "$TTS_HIP_BIN" "$TTS_HIP_MODEL_DIR" "127.0.0.1:${TTS_HIP_PORT}" 240 &
@@ -71,9 +78,9 @@ QWEN3_TTS_HIP_URL="http://127.0.0.1:${TTS_HIP_PORT}" "$VENV/bin/speech-to-speech
   --parakeet_tdt_device cuda \
   --parakeet_tdt_compute_type float16 \
   --llm_backend chat-completions \
-  --model_name gemma-e4b \
-  --responses_api_base_url "http://127.0.0.1:${LLM_PORT}/v1" \
-  --responses_api_api_key "" \
+  --model_name "$LLM_NAME" \
+  --responses_api_base_url "$LLM_BASE_URL" \
+  --responses_api_api_key "$LLM_API_KEY" \
   --tts qwen3 \
   --qwen3_tts_model_name "$TTS_MODEL" \
   --qwen3_tts_backend hip-http \

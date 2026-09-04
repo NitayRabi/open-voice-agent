@@ -1,13 +1,20 @@
-import { getSettings, saveSettings, invoke, listen, emit, isWeb } from "./lib/tauri.js";
+import { getSettings, saveSettings, invoke, listen, isWeb } from "./lib/tauri.js";
 
 const $ = (id) => document.getElementById(id);
 const logEl = $("log");
 const statusEl = $("status");
 
+function newPairingCode() {
+  const bytes = crypto.getRandomValues(new Uint8Array(10));
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 const FIELDS = {
-  backend_mode: "value",
-  server_url: "value",
-  voicechat_url: "value",
+  speech_model: "value",
+  speech_model_source: "value",
+  speech_remote_base_url: "value",
+  speech_remote_model: "value",
+  speech_remote_api_key: "value",
   voice: "value",
   sample_rate: "int",
   mic_device_id: "value",
@@ -32,11 +39,6 @@ const FIELDS = {
   delegation_tool_description: "value",
   delegation_timeout_s: "int",
   delegation_speak_result: "checked",
-  manage_backend: "checked",
-  launch_command: "cmd",
-  launch_cwd: "value",
-  health_url: "value",
-  launch_env: "env",
   web_enabled: "checked",
   web_bind: "value",
   web_port: "int",
@@ -45,70 +47,18 @@ const FIELDS = {
   web_tls_key: "value",
 };
 
-const PRESETS = {
-  hf: {
-    backend_mode: "hf_realtime",
-    server_url: "ws://127.0.0.1:8765/v1/realtime",
-    sample_rate: 16000,
-    launch_command: "bash ../hf-s2s/run-comparison.sh",
-    launch_cwd: "",
-    health_url: "http://127.0.0.1:8766/",
-    launch_env: {
-      HF_S2S_LLM_MODEL: "/home/nitayrabi/models/gemma-4-E4B_q4_0-it.gguf",
-      HF_S2S_BACKEND_PORT: "8766",
-      HF_S2S_WSS_PORT: "8765",
-    },
-  },
-  vc4: {
-    backend_mode: "voicechat_http",
-    voicechat_url: "https://127.0.0.1:8999",
-    sample_rate: 16000,
-    launch_command: "bash ../run.sh --quant Q4_0 --port 8999",
-    launch_cwd: "",
-    health_url: "https://127.0.0.1:8999/",
-    launch_env: {},
-  },
-  vc8: {
-    backend_mode: "voicechat_http",
-    voicechat_url: "https://127.0.0.1:9000",
-    sample_rate: 16000,
-    launch_command: "bash ../run.sh --quant Q8_0 --port 9000",
-    launch_cwd: "",
-    health_url: "https://127.0.0.1:9000/",
-    launch_env: {},
-  },
-};
-
-function envToText(obj) {
-  return Object.entries(obj || {})
-    .map(([k, v]) => `${k}=${v}`)
-    .join("\n");
-}
-function textToEnv(text) {
-  const out = {};
-  for (const line of text.split("\n")) {
-    const s = line.trim();
-    if (!s || s.startsWith("#")) continue;
-    const eq = s.indexOf("=");
-    if (eq === -1) continue;
-    out[s.slice(0, eq).trim()] = s.slice(eq + 1).trim();
-  }
-  return out;
-}
-
 function applyToForm(s) {
   for (const [id, kind] of Object.entries(FIELDS)) {
     const el = $(id);
     if (!el) continue;
     const v = s[id];
     if (kind === "checked") el.checked = !!v;
-    else if (kind === "cmd") el.value = Array.isArray(v) ? v.join(" ") : v || "";
-    else if (kind === "env") el.value = envToText(v);
     else el.value = v ?? "";
   }
   updateGateLabel();
-  updateModeVisibility();
   updateBrainVisibility();
+  updateSpeechVisibility();
+  $("speech_model_path").value = s.speech_model?.includes("/") ? s.speech_model : "";
 }
 
 function readForm(base) {
@@ -118,8 +68,6 @@ function readForm(base) {
     if (!el) continue;
     if (kind === "checked") s[id] = el.checked;
     else if (kind === "int" || kind === "float") s[id] = Number(el.value);
-    else if (kind === "cmd") s[id] = el.value.trim().split(/\s+/).filter(Boolean);
-    else if (kind === "env") s[id] = textToEnv(el.value);
     else s[id] = el.value;
   }
   return s;
@@ -129,16 +77,16 @@ function updateGateLabel() {
   const v = Number($("noise_gate_db").value);
   $("gate_val").textContent = v <= -100 ? "off" : `${v} dB`;
 }
-function updateModeVisibility() {
-  const mode = $("backend_mode").value;
-  document.querySelectorAll("[data-mode]").forEach((el) => {
-    el.classList.toggle("show", el.dataset.mode === mode);
-  });
-}
 function updateBrainVisibility() {
   const src = $("brain_source").value;
   document.querySelectorAll("[data-brain]").forEach((el) => {
     el.classList.toggle("show", el.dataset.brain === src);
+  });
+}
+function updateSpeechVisibility() {
+  const src = $("speech_model_source").value || "local";
+  document.querySelectorAll("[data-speech-source]").forEach((el) => {
+    el.classList.toggle("show", el.dataset.speechSource === src);
   });
 }
 
@@ -153,21 +101,14 @@ document.querySelectorAll("nav.tabs button").forEach((b) => {
 });
 
 $("noise_gate_db").addEventListener("input", updateGateLabel);
-$("backend_mode").addEventListener("change", updateModeVisibility);
 $("brain_source").addEventListener("change", updateBrainVisibility);
+$("speech_model_source").addEventListener("change", updateSpeechVisibility);
+$("speech_model").addEventListener("change", () => ($("speech_model_path").value = ""));
 
-document.querySelectorAll("[data-preset]").forEach((b) => {
-  b.addEventListener("click", () => {
-    const p = PRESETS[b.dataset.preset];
-    for (const [k, v] of Object.entries(p)) {
-      const el = $(k);
-      if (!el) continue;
-      if (k === "launch_env") el.value = envToText(v);
-      else el.value = v;
-    }
-    updateModeVisibility();
-    flash(`applied ${b.textContent.trim()} preset — review, then Save`);
-  });
+$("generate_web_token").addEventListener("click", () => {
+  $("web_token").value = newPairingCode();
+  $("web_token").type = "text";
+  flash("new pairing code generated — Save to apply it");
 });
 
 // ── state ───────────────────────────────────────────────────────────────
@@ -186,32 +127,24 @@ function appendLog(line) {
 }
 
 async function save() {
+  if ($("web_enabled").checked && $("web_bind").value !== "127.0.0.1" && !$("web_token").value.trim()) {
+    $("web_token").value = newPairingCode();
+    $("web_token").type = "text";
+  }
   current = readForm(current);
+  if (current.speech_model_source === "remote") {
+    if (!current.speech_remote_base_url.trim() || !current.speech_remote_model.trim()) {
+      throw new Error("remote conversational model requires an endpoint and model name");
+    }
+  } else if ($("speech_model_path").value.trim()) {
+    current.speech_model = $("speech_model_path").value.trim();
+  }
   await saveSettings(current);
   flash("saved");
   return current;
 }
 
 $("save").addEventListener("click", () => save().catch((e) => flash(`save failed: ${e}`)));
-$("save_restart").addEventListener("click", async () => {
-  try {
-    await save();
-    await emit("settings-changed");
-    flash("saved — speech restarting");
-  } catch (e) {
-    flash(`failed: ${e}`);
-  }
-});
-
-$("backend_start").addEventListener("click", async () => {
-  try {
-    await save();
-    await invoke("backend_start");
-  } catch (e) {
-    flash(`start failed: ${e}`);
-  }
-});
-$("backend_stop").addEventListener("click", () => invoke("backend_stop").catch((e) => flash(String(e))));
 $("clear_log").addEventListener("click", () => (logEl.textContent = ""));
 
 $("web_open").addEventListener("click", async () => {
@@ -244,9 +177,6 @@ $("test_delegate").addEventListener("click", async () => {
 
 // ── backend events ──────────────────────────────────────────────────────
 listen("backend-log", (e) => appendLog(e.payload));
-listen("backend-status", (e) => {
-  $("backend_state").textContent = e.payload ? "running" : "stopped";
-});
 listen("ova-transcript", (e) => {
   const { role, text } = e.payload || {};
   appendLog(`  ${role}: ${text}`);
@@ -329,6 +259,30 @@ async function renderModels() {
     box.appendChild(row);
   }
   populateLocalModels();
+  populateSpeechModels();
+  populateSetupModels();
+}
+
+function option(select, value, label) {
+  const o = document.createElement("option");
+  o.value = value;
+  o.textContent = label;
+  select.appendChild(o);
+}
+
+function populateSpeechModels() {
+  const select = $("speech_model");
+  const chosen = select.value || current.speech_model || "";
+  const compatible = _modelsCache.models.filter((m) => m.roles?.includes("cascade_llm"));
+  select.innerHTML = "";
+  for (const m of compatible) {
+    option(select, m.id, `${m.name}${m.installed ? " — installed" : " — download required"}`);
+  }
+  if (chosen && !compatible.some((m) => m.id === chosen)) {
+    option(select, chosen, chosen.includes("/") ? chosen : `${chosen} (not installed)`);
+  }
+  if (!select.options.length) option(select, "", "No compatible models available");
+  select.value = chosen;
 }
 
 function populateLocalModels() {
@@ -358,6 +312,221 @@ function populateLocalModels() {
   sel.value = chosen;
 }
 
+// ── first-run setup ────────────────────────────────────────────────────
+let setupStep = 0;
+
+function populateSetupModels() {
+  const speech = $("setup_speech_model");
+  const configuredSpeech = current.speech_model?.includes("/") ? "" : current.speech_model;
+  const previousSpeech = speech.value || configuredSpeech || "qwen2.5-3b-instruct-q4km";
+  speech.innerHTML = "";
+  for (const m of _modelsCache.models.filter((m) => m.roles?.includes("cascade_llm"))) {
+    const recommended = m.id === "qwen2.5-3b-instruct-q4km" ? " (Recommended)" : "";
+    option(speech, m.id, `${m.name}${recommended}${m.installed ? " — installed" : " — download required"}`);
+  }
+  speech.value = previousSpeech;
+
+  const brain = $("setup_brain_model");
+  const previousBrain = brain.value || current.brain_local_model || "";
+  brain.innerHTML = "";
+  for (const m of _modelsCache.models.filter((m) => m.installed && m.roles?.includes("brain"))) {
+    option(brain, m.id, m.name);
+  }
+  if (!brain.options.length) option(brain, "", "No local model installed");
+  brain.value = previousBrain || brain.options[0]?.value || "";
+
+  const selected = _modelsCache.models.find((m) => m.id === speech.value);
+  if (selected?.installed) {
+    $("setup_speech_status").textContent = `Installed (${fmtBytes(selected.bytes_on_disk)})`;
+  } else if (selected?.downloading) {
+    const pct = selected.job?.total ? Math.round((selected.job.downloaded / selected.job.total) * 100) : 0;
+    $("setup_speech_status").textContent = `Downloading… ${pct}%`;
+  } else {
+    $("setup_speech_status").textContent = "Not installed";
+  }
+}
+
+function setSetupStep(step) {
+  setupStep = step;
+  document.querySelectorAll(".setup-step").forEach((el) => {
+    el.classList.toggle("active", Number(el.dataset.setupStep) === step);
+  });
+  document.querySelectorAll(".setup-progress i").forEach((el, i) => {
+    el.classList.toggle("active", i <= step);
+  });
+  $("setup_back").hidden = step === 0;
+  $("setup_next").textContent = step === 0 ? "Get started" : step === 3 ? "Finish & start" : "Continue";
+  $("setup_error").hidden = true;
+  if (step === 3) renderSetupReview();
+}
+
+function showSetup(show) {
+  $("setup").hidden = !show;
+  document.querySelectorAll("body > header, body > nav, body > main, body > footer").forEach((el) => {
+    el.inert = show;
+  });
+}
+
+function setupError(message) {
+  $("setup_error").textContent = message;
+  $("setup_error").hidden = false;
+}
+
+function selectedSpeechModel() {
+  return $("setup_speech_path").value.trim() || $("setup_speech_model").value;
+}
+
+function syncSetupSpeech() {
+  const local = $("setup_speech_source").value !== "remote";
+  $("setup_speech_local").hidden = !local;
+  $("setup_speech_remote").hidden = local;
+}
+
+function selectedBrainModel() {
+  return $("setup_brain_path").value.trim() || $("setup_brain_model").value;
+}
+
+function syncSetupBrain() {
+  const local = $("setup_brain_source").value === "local";
+  $("setup_brain_remote").hidden = local;
+  $("setup_brain_local").hidden = !local;
+}
+
+function initSetupForm() {
+  $("setup_speech_source").value = current.speech_model_source || "local";
+  $("setup_speech_path").value = current.speech_model?.includes("/") ? current.speech_model : "";
+  $("setup_speech_remote_url").value = current.speech_remote_base_url || "";
+  $("setup_speech_remote_name").value = current.speech_remote_model || "";
+  $("setup_speech_remote_key").value = current.speech_remote_api_key || "";
+  $("setup_brain_source").value = current.brain_source || "remote";
+  $("setup_brain_url").value = current.brain_base_url || "";
+  $("setup_brain_name").value = current.brain_model || "";
+  $("setup_brain_key").value = current.brain_api_key || "";
+  $("setup_brain_path").value = current.brain_local_model?.includes("/") ? current.brain_local_model : "";
+  $("setup_llama_server").value = current.llama_server_bin || "llama-server";
+  syncSetupBrain();
+  syncSetupSpeech();
+  populateSetupModels();
+  setSetupStep(0);
+}
+
+async function validateSetupStep() {
+  if (setupStep === 1) {
+    if ($("setup_speech_source").value === "remote") {
+      if (!$("setup_speech_remote_url").value.trim()) throw new Error("Enter the conversational model endpoint.");
+      if (!$("setup_speech_remote_name").value.trim()) throw new Error("Enter the model name expected by that endpoint.");
+    } else {
+      const selected = selectedSpeechModel();
+      if (!selected) throw new Error("Choose or download a conversational model.");
+      const path = await invoke("model_resolve", { idOrPath: selected });
+      if (!path) throw new Error("That conversational model is not available yet. Download it or open Advanced and enter an existing GGUF path.");
+    }
+  }
+  if (setupStep === 2) {
+    if ($("setup_brain_source").value === "remote") {
+      if (!$("setup_brain_url").value.trim()) throw new Error("Enter the capable model endpoint.");
+      if (!$("setup_brain_name").value.trim()) throw new Error("Enter the model name expected by that endpoint.");
+    } else {
+      const id = selectedBrainModel();
+      if (!id || !(await invoke("model_resolve", { idOrPath: id }))) {
+        throw new Error("Install and choose a local model for delegation.");
+      }
+      if (!$("setup_llama_server").value.trim()) throw new Error("Enter the llama-server executable path.");
+    }
+  }
+}
+
+function renderSetupReview() {
+  const review = $("setup_review");
+  review.innerHTML = "";
+  const speech = _modelsCache.models.find((m) => m.id === selectedSpeechModel());
+  const speechDescription = $("setup_speech_source").value === "remote"
+    ? `${$("setup_speech_remote_name").value} at ${$("setup_speech_remote_url").value}`
+    : (speech?.name || selectedSpeechModel());
+  const items = [
+    ["Voice pipeline", "Parakeet → conversational model → speech"],
+    ["Conversational model", speechDescription],
+    ["Delegation", $("setup_brain_source").value === "local"
+      ? (selectedBrainModel().includes("/") ? selectedBrainModel() : $("setup_brain_model").selectedOptions[0]?.textContent)
+      : `${$("setup_brain_name").value} at ${$("setup_brain_url").value}`],
+  ];
+  for (const [label, value] of items) {
+    const row = document.createElement("div");
+    const strong = document.createElement("strong");
+    strong.textContent = label;
+    const span = document.createElement("span");
+    span.textContent = value || "Not configured";
+    row.append(strong, span);
+    review.appendChild(row);
+  }
+}
+
+$("setup_brain_source").addEventListener("change", syncSetupBrain);
+$("setup_speech_source").addEventListener("change", syncSetupSpeech);
+$("setup_speech_model").addEventListener("change", () => {
+  $("setup_speech_path").value = "";
+  populateSetupModels();
+});
+$("setup_brain_model").addEventListener("change", () => ($("setup_brain_path").value = ""));
+$("setup_download_speech").addEventListener("click", async () => {
+  try {
+    const id = $("setup_speech_model").value;
+    if (!id) throw new Error("Choose a model first.");
+    await invoke("model_download", { id });
+    $("setup_speech_status").textContent = "Starting download…";
+    await renderModels();
+  } catch (e) {
+    setupError(String(e.message || e));
+  }
+});
+$("setup_back").addEventListener("click", () => setSetupStep(Math.max(0, setupStep - 1)));
+$("setup_next").addEventListener("click", async () => {
+  try {
+    await validateSetupStep();
+    if (setupStep < 3) {
+      setSetupStep(setupStep + 1);
+      return;
+    }
+
+    current.speech_model_source = $("setup_speech_source").value;
+    if (current.speech_model_source === "remote") {
+      current.speech_remote_base_url = $("setup_speech_remote_url").value.trim();
+      current.speech_remote_model = $("setup_speech_remote_name").value.trim();
+      current.speech_remote_api_key = $("setup_speech_remote_key").value.trim();
+    } else {
+      current.speech_model = selectedSpeechModel();
+    }
+    current.delegation_enabled = true;
+    current.brain_source = $("setup_brain_source").value;
+    if (current.brain_source === "remote") {
+      current.brain_base_url = $("setup_brain_url").value.trim();
+      current.brain_model = $("setup_brain_name").value.trim();
+      current.brain_api_key = $("setup_brain_key").value.trim();
+    } else {
+      current.brain_local_model = selectedBrainModel();
+      current.llama_server_bin = $("setup_llama_server").value.trim();
+    }
+    current.server_url = "ws://127.0.0.1:8766/v1/realtime";
+    current.launch_command = ["bash", "hf-s2s/run-comparison.sh"];
+    current.health_url = "http://127.0.0.1:8766/";
+    current.manage_backend = true;
+    current.setup_completed = true;
+    await saveSettings(current);
+    try {
+      await invoke("backend_start");
+    } catch (e) {
+      current.setup_completed = false;
+      await saveSettings(current);
+      throw new Error(`The voice engine could not start: ${e}`);
+    }
+    showSetup(false);
+    applyToForm(current);
+    if (isWeb) location.replace("/");
+  } catch (e) {
+    setupError(String(e.message || e));
+  }
+});
+
 $("am_add").addEventListener("click", async () => {
   const spec = {
     name: $("am_name").value,
@@ -379,11 +548,7 @@ listen("asset-progress", () => {
   _refreshTimer = setTimeout(renderModels, 400);
 });
 
-async function refreshBackendState() {
-  try {
-    const running = await invoke("backend_running");
-    $("backend_state").textContent = running ? "running" : "stopped";
-  } catch {}
+async function refreshWebState() {
   try {
     const url = await invoke("web_url").catch(() => null);
     $("web_state").textContent = url ? "running" : "stopped";
@@ -413,20 +578,29 @@ async function loadMics() {
 }
 
 // ── init ────────────────────────────────────────────────────────────────
+// Browser first-run redirects include this flag, so cover the settings UI
+// before any API or device-enumeration work can paint underneath it.
+if (new URLSearchParams(location.search).get("setup") === "1") showSetup(true);
+
 (async () => {
   current = await getSettings();
   applyToForm(current);
-  await loadMics();
-  await refreshBackendState();
+  const shouldShowSetup = !current.setup_completed
+    || new URLSearchParams(location.search).get("setup") === "1";
+  if (shouldShowSetup) showSetup(true);
   await renderModels();
   applyToForm(current); // re-apply brain_local_model now that the dropdown is populated
+  initSetupForm();
+  // Device enumeration can wait on browser permission UI. Never hold the
+  // settings/setup screen behind that prompt.
+  refreshWebState();
+  loadMics();
   try {
     $("version").textContent = "v" + ((await invoke("app_version").catch(() => "")) || "");
   } catch {}
   if (isWeb) {
-    const token = new URLSearchParams(location.search).get("token");
     const back = document.createElement("a");
-    back.href = "./" + (token ? `?token=${encodeURIComponent(token)}` : "");
+    back.href = "./";
     back.textContent = "← Voice";
     back.style.cssText = "color:#9db8ff;text-decoration:none;font-size:.85rem;margin-left:.6rem";
     $("version").after(back);

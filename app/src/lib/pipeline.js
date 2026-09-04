@@ -80,11 +80,7 @@ export class VoicePipeline extends EventTarget {
     this._setState("connecting");
     try {
       await this._setupAudio();
-      if (this.settings.backend_mode === "voicechat_http") {
-        await this._startVoicechat();
-      } else {
-        await this._connectRealtime();
-      }
+      await this._connectRealtime();
     } catch (e) {
       this._log(`start failed: ${e.message || e}`);
       this._setState("error");
@@ -99,8 +95,6 @@ export class VoicePipeline extends EventTarget {
       this._ws?.close();
     } catch {}
     this._ws = null;
-    this._sse?.close?.();
-    this._sse = null;
     if (this._stream) this._stream.getTracks().forEach((t) => t.stop());
     this._stream = null;
     this._capture?.disconnect();
@@ -196,10 +190,6 @@ export class VoicePipeline extends EventTarget {
 
   _onMicChunk(arrayBuffer) {
     if (this._muted) return;
-    if (this.settings.backend_mode === "voicechat_http") {
-      this._vcOnChunk(arrayBuffer);
-      return;
-    }
     if (this._ws?.readyState === WebSocket.OPEN) {
       this._ws.send(
         JSON.stringify({ type: "input_audio_buffer.append", audio: b64FromBuf(arrayBuffer) }),
@@ -439,165 +429,6 @@ export class VoicePipeline extends EventTarget {
     } finally {
       if (this.state === "delegating") this._setState("listening");
     }
-  }
-
-  // ── VoiceChat 11B (turn-based POST + SSE handoffs) ──────────────────────
-
-  async _startVoicechat() {
-    // Client-side VAD auto-turns, mirroring voicechat/vc_openclaw.py's web UI.
-    this._vc = {
-      base: this.settings.voicechat_url.replace(/\/$/, ""),
-      speaking: false,
-      buf: [],
-      pre: [],
-      sil: 0,
-      spoke: 0,
-      busy: false,
-      rate: this.settings.sample_rate || 16000,
-    };
-    this._setState("listening");
-    try {
-      this._sse = new EventSource(`${this._vc.base}/events`);
-      this._sse.onmessage = (e) => this._vcHandoff(JSON.parse(e.data));
-      this._sse.onerror = () => this._log("handoff stream reconnecting");
-    } catch (e) {
-      this._log(`SSE unavailable: ${e.message || e}`);
-    }
-  }
-
-  _vcOnChunk(arrayBuffer) {
-    const vc = this._vc;
-    if (!vc || vc.busy) return;
-    const i16 = new Int16Array(arrayBuffer);
-    const f = new Float32Array(i16.length);
-    let sum = 0;
-    for (let i = 0; i < i16.length; i++) {
-      f[i] = i16[i] / 32768;
-      sum += f[i] * f[i];
-    }
-    const rms = Math.sqrt(sum / f.length);
-    const dt = i16.length / vc.rate;
-    const TH = 0.012,
-      HOLD = 0.7,
-      MIN = 0.35,
-      PRE = 8;
-    const loud = rms > TH;
-    if (!vc.speaking) {
-      vc.pre.push(f);
-      if (vc.pre.length > PRE) vc.pre.shift();
-      if (loud) {
-        vc.speaking = true;
-        vc.buf = vc.pre.slice();
-        vc.pre = [];
-        vc.spoke = 0;
-        vc.sil = 0;
-        this._setState("user_speaking");
-      }
-    } else {
-      vc.buf.push(f);
-      vc.spoke += dt;
-      vc.sil = loud ? 0 : vc.sil + dt;
-      if (vc.sil >= HOLD) {
-        vc.speaking = false;
-        if (vc.spoke - vc.sil >= MIN) this._vcSendTurn(vc.buf.slice());
-        vc.buf = [];
-        if (!vc.busy) this._setState("listening");
-      }
-    }
-  }
-
-  _encodeWav(frames, rate) {
-    let n = 0;
-    for (const f of frames) n += f.length;
-    const buf = new ArrayBuffer(44 + n * 2);
-    const v = new DataView(buf);
-    let o = 0;
-    const s = (t) => {
-      for (let i = 0; i < t.length; i++) v.setUint8(o++, t.charCodeAt(i));
-    };
-    s("RIFF");
-    v.setUint32(o, 36 + n * 2, true);
-    o += 4;
-    s("WAVEfmt ");
-    v.setUint32(o, 16, true);
-    o += 4;
-    v.setUint16(o, 1, true);
-    o += 2;
-    v.setUint16(o, 1, true);
-    o += 2;
-    v.setUint32(o, rate, true);
-    o += 4;
-    v.setUint32(o, rate * 2, true);
-    o += 4;
-    v.setUint16(o, 2, true);
-    o += 2;
-    v.setUint16(o, 16, true);
-    o += 2;
-    s("data");
-    v.setUint32(o, n * 2, true);
-    o += 4;
-    for (const f of frames)
-      for (let i = 0; i < f.length; i++) {
-        const x = Math.max(-1, Math.min(1, f[i]));
-        v.setInt16(o, x < 0 ? x * 0x8000 : x * 0x7fff, true);
-        o += 2;
-      }
-    return new Blob([buf], { type: "audio/wav" });
-  }
-
-  async _vcSendTurn(frames) {
-    const vc = this._vc;
-    vc.busy = true;
-    this._setState("thinking");
-    try {
-      const r = await fetch(`${vc.base}/turn`, {
-        method: "POST",
-        body: this._encodeWav(frames, vc.rate),
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const meta = JSON.parse(decodeURIComponent(r.headers.get("X-Meta") || "{}"));
-      if (meta.user) this._emit("transcript", { role: "user", text: meta.user });
-      (meta.tools || []).forEach((x) =>
-        this._emit("transcript", { role: "tool", text: `${x.source} → ${x.request}` }),
-      );
-      if (meta.text) this._emit("transcript", { role: "assistant", text: meta.text });
-      await this._playBlob(await r.blob());
-    } catch (e) {
-      this._log(`turn failed: ${e.message || e}`);
-      this._setState("error");
-    } finally {
-      vc.busy = false;
-      if (this.running) this._setState("listening");
-    }
-  }
-
-  async _vcHandoff(h) {
-    if (h.kind === "handoff_error") {
-      this._emit("transcript", { role: "tool", text: `handoff error: ${h.error}` });
-      return;
-    }
-    if (h.kind !== "handoff") return;
-    this._emit("transcript", { role: "tool", text: `agent (${h.seconds}s) → ${h.answer}` });
-    this._emit("transcript", { role: "assistant", text: h.answer });
-    try {
-      const r = await fetch(`${this._vc.base}${h.audio}`);
-      if (r.ok) await this._playBlob(await r.blob());
-    } catch (e) {
-      this._log(`handoff playback failed: ${e.message || e}`);
-    }
-  }
-
-  async _playBlob(blob) {
-    this._setState("speaking");
-    const url = URL.createObjectURL(blob);
-    const a = new Audio(url);
-    await new Promise((res) => {
-      a.onended = res;
-      a.onerror = res;
-      a.play().catch(res);
-    });
-    URL.revokeObjectURL(url);
-    if (this.running) this._setState("listening");
   }
 
   async listInputDevices() {

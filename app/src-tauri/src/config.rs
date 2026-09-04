@@ -9,14 +9,8 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-fn d_backend_mode() -> String {
-    "hf_realtime".into()
-}
 fn d_server_url() -> String {
-    "ws://127.0.0.1:8765/v1/realtime".into()
-}
-fn d_voicechat_url() -> String {
-    "https://127.0.0.1:8999".into()
+    "ws://127.0.0.1:8766/v1/realtime".into()
 }
 fn d_voice() -> String {
     "Aiden".into()
@@ -87,10 +81,16 @@ fn d_gate_db() -> f64 {
     -100.0
 }
 fn d_launch_cmd() -> Vec<String> {
-    vec!["bash".into(), "../hf-s2s/run-comparison.sh".into()]
+    vec!["bash".into(), "hf-s2s/run-comparison.sh".into()]
 }
 fn d_health_url() -> String {
     "http://127.0.0.1:8766/".into()
+}
+fn d_speech_model() -> String {
+    "qwen2.5-3b-instruct-q4km".into()
+}
+fn d_local() -> String {
+    "local".into()
 }
 fn d_web_bind() -> String {
     "127.0.0.1".into()
@@ -104,15 +104,9 @@ fn d_web_port() -> u16 {
 // carries its own `#[serde(default ...)]` instead.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
-    /// "hf_realtime" (OpenAI-Realtime WS cascade) or "voicechat_http" (turn-based POST)
-    #[serde(default = "d_backend_mode")]
-    pub backend_mode: String,
-    /// Realtime WebSocket URL for hf_realtime mode.
+    /// Internal Realtime WebSocket URL. Browser clients receive a host-aware URL.
     #[serde(default = "d_server_url")]
     pub server_url: String,
-    /// Base HTTPS URL for voicechat_http mode.
-    #[serde(default = "d_voicechat_url")]
-    pub voicechat_url: String,
 
     #[serde(default = "d_voice")]
     pub voice: String,
@@ -122,6 +116,18 @@ pub struct Settings {
     pub hotkey: String,
     #[serde(default = "d_sample_rate")]
     pub sample_rate: u32,
+    /// Catalog id or absolute GGUF path used by the built-in speech pipeline.
+    #[serde(default = "d_speech_model")]
+    pub speech_model: String,
+    /// "local" runs a downloaded GGUF; "remote" calls an OpenAI-compatible API.
+    #[serde(default = "d_local")]
+    pub speech_model_source: String,
+    #[serde(default)]
+    pub speech_remote_base_url: String,
+    #[serde(default)]
+    pub speech_remote_model: String,
+    #[serde(default)]
+    pub speech_remote_api_key: String,
     #[serde(default)]
     pub mic_device_id: String,
     #[serde(default)]
@@ -196,6 +202,10 @@ pub struct Settings {
     #[serde(default = "d_health_url")]
     pub health_url: String,
 
+    /// Set after the required first-run voice and delegation setup succeeds.
+    #[serde(default)]
+    pub setup_completed: bool,
+
     // ── embedded web server (config + voice UI over HTTP) ───────────
     /// Serve the config + voice UI over HTTP so a browser or another device
     /// can use it.
@@ -206,8 +216,8 @@ pub struct Settings {
     pub web_bind: String,
     #[serde(default = "d_web_port")]
     pub web_port: u16,
-    /// Optional bearer token required on every request (`?token=` or
-    /// `Authorization: Bearer`). Strongly recommended when binding to 0.0.0.0.
+    /// Browser pairing code and API bearer token. Strongly recommended when
+    /// binding to 0.0.0.0.
     #[serde(default)]
     pub web_token: String,
     /// Paths to a TLS cert + key (PEM). Needed for microphone access from any
@@ -239,10 +249,15 @@ impl Settings {
             return Settings::default();
         };
         match fs::read_to_string(&path) {
-            Ok(raw) => serde_json::from_str(&raw).unwrap_or_else(|e| {
-                eprintln!("[config] {path:?} is invalid ({e}); using defaults");
-                Settings::default()
-            }),
+            Ok(raw) => {
+                let mut settings = serde_json::from_str(&raw).unwrap_or_else(|e| {
+                    eprintln!("[config] {path:?} is invalid ({e}); using defaults");
+                    Settings::default()
+                });
+                // The speech stack is an implementation detail, not a user choice.
+                settings.server_url = d_server_url();
+                settings
+            }
             Err(_) => Settings::default(),
         }
     }
