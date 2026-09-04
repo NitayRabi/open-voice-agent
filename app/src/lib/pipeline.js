@@ -37,6 +37,9 @@ export class VoicePipeline extends EventTarget {
     this._reconnects = 0;
     this._pendingCalls = new Map(); // call_id -> { name, args }
     this._asstText = "";
+    this._responseActive = false;
+    this._queuedAgentReports = [];
+    this._nextTaskId = 1;
   }
 
   configure(settings) {
@@ -55,6 +58,7 @@ export class VoicePipeline extends EventTarget {
     if (this.state === s) return;
     this.state = s;
     this._emit("state", { state: s });
+    if (s === "listening") this._flushAgentReport();
   }
 
   _log(msg) {
@@ -329,8 +333,9 @@ export class VoicePipeline extends EventTarget {
         if (msg.transcript) this._emit("transcript", { role: "user", text: msg.transcript.trim() });
         break;
       case "response.created":
+        this._responseActive = true;
         this._asstText = "";
-        if (this.state !== "delegating") this._setState("thinking");
+        this._setState("thinking");
         break;
       case "response.output_audio.delta":
       case "response.audio.delta":
@@ -355,11 +360,13 @@ export class VoicePipeline extends EventTarget {
         this._handleFunctionCall(msg);
         break;
       case "response.done": {
+        this._responseActive = false;
         const status = msg.response?.status;
         if (status === "failed") {
           this._log(`response failed: ${JSON.stringify(msg.response?.status_details || {})}`);
         }
-        if (this.state !== "delegating") this._setState("listening");
+        this._setState("listening");
+        this._flushAgentReport();
         break;
       }
       default:
@@ -373,6 +380,7 @@ export class VoicePipeline extends EventTarget {
 
   async _handleFunctionCall(msg) {
     const callId = msg.call_id || msg.callId || "";
+    const taskId = callId || `task-${this._nextTaskId++}`;
     let request = "";
     try {
       const args = JSON.parse(msg.arguments || "{}");
@@ -381,6 +389,7 @@ export class VoicePipeline extends EventTarget {
       request = msg.arguments || "";
     }
     this._emit("transcript", { role: "tool", text: `delegate_task → ${request}` });
+    this._emit("task", { id: taskId, request, status: "running" });
 
     // 1. Acknowledge immediately so the voice model tells the user it's on it
     //    while the brain works.
@@ -392,43 +401,55 @@ export class VoicePipeline extends EventTarget {
         output: "Handed to the brain. Tell the user briefly that you're on it.",
       },
     });
+    // Reserve the response slot immediately so a fast delegated result cannot
+    // start a second voice response before the acknowledgement has finished.
+    this._responseActive = true;
     this._sendWs({ type: "response.create" });
-    this._setState("delegating");
 
     // 2. Run the delegation off the critical path.
     if (!this.opts.delegate) {
       this._log("no delegate handler wired");
+      this._emit("task", {
+        id: taskId,
+        request,
+        status: "failed",
+        error: "No delegate handler is configured",
+      });
       return;
     }
     try {
       const answer = await this.opts.delegate(request);
       this._emit("transcript", { role: "tool", text: `brain ✓ ${answer}` });
+      this._emit("task", { id: taskId, request, status: "completed", result: answer });
       if (this.settings.delegation_speak_result && answer) {
-        this._sendWs({
-          type: "conversation.item.create",
-          item: {
-            type: "message",
-            role: "user",
-            content: [{ type: "input_text", text: `The brain answered: ${answer}. Relay this to me in one or two sentences.` }],
-          },
-        });
-        this._sendWs({ type: "response.create" });
-      }
+        this._queueAgentReport(`The delegated task is complete. The agent answered: ${answer}. Relay the result to me in one or two natural spoken sentences.`);
+     }
     } catch (e) {
       const err = e.message || String(e);
       this._emit("transcript", { role: "tool", text: `brain ✗ ${err}` });
-      this._sendWs({
-        type: "conversation.item.create",
-        item: {
-          type: "message",
-          role: "user",
-          content: [{ type: "input_text", text: `The brain couldn't do that: ${err}. Let me know briefly.` }],
-        },
-      });
-      this._sendWs({ type: "response.create" });
-    } finally {
-      if (this.state === "delegating") this._setState("listening");
+      this._emit("task", { id: taskId, request, status: "failed", error: err });
+      this._queueAgentReport(`The delegated task failed: ${err}. Let me know briefly.`);
     }
+  }
+
+  _queueAgentReport(text) {
+    this._queuedAgentReports.push(text);
+    this._flushAgentReport();
+  }
+
+  _flushAgentReport() {
+    if (this._responseActive || this.state !== "listening" || !this._queuedAgentReports.length) return;
+    const text = this._queuedAgentReports.shift();
+    this._sendWs({
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text }],
+      },
+    });
+    this._responseActive = true;
+    this._sendWs({ type: "response.create" });
   }
 
   async listInputDevices() {

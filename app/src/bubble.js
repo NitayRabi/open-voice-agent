@@ -1,11 +1,13 @@
 import { VoicePipeline } from "./lib/pipeline.js";
 import { getSettings, delegate, listen, emit, invoke, currentWindow, hasTauri } from "./lib/tauri.js";
 import { StormOrb } from "./lib/storm-orb.js";
+import { TaskToast } from "./lib/task-toast.js";
 
 const orb = document.getElementById("orb");
 const gear = document.getElementById("gear");
 const caption = document.getElementById("caption");
 const visual = new StormOrb(orb);
+const taskToast = new TaskToast({ compact: true });
 
 const CAPTIONS = {
   idle: "tap to talk",
@@ -54,6 +56,7 @@ pipeline.addEventListener("transcript", (e) => {
   // forward for the settings window's live log
   emit("ova-transcript", e.detail).catch(() => {});
 });
+pipeline.addEventListener("task", (e) => taskToast.update(e.detail));
 
 // ── input handling: quick tap = toggle, drag = move window ────────────────
 

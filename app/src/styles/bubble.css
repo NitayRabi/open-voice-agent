@@ -217,3 +217,31 @@ body {
   text-align: center;
   min-height: 13px;
 }
+.task-toast {
+  position: fixed;
+  top: 3px;
+  left: 4px;
+  right: 4px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 5px 8px;
+  border: 1px solid rgba(140, 172, 255, 0.35);
+  border-radius: 999px;
+  background: rgba(16, 21, 31, 0.92);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.45);
+  color: #edf3ff;
+  backdrop-filter: blur(12px);
+}
+.task-toast[hidden] { display: none; }
+.task-toast-icon { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: #82a7ff; }
+.status-running .task-toast-icon { animation: task-pulse 1.2s ease-in-out infinite; }
+.status-completed .task-toast-icon { background: #65dc91; }
+.status-failed .task-toast-icon { background: #ff8585; }
+.task-toast-copy { min-width: 0; }
+.task-toast strong { display: block; overflow: hidden; font-size: 10px; line-height: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.task-toast small { display: none; }
+@keyframes task-pulse { 50% { opacity: 0.4; transform: scale(0.7); } }

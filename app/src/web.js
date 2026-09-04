@@ -1,6 +1,7 @@
 import { VoicePipeline } from "./lib/pipeline.js";
 import { getSettings, delegate, listen } from "./lib/tauri.js";
 import { StormOrb } from "./lib/storm-orb.js";
+import { TaskToast } from "./lib/task-toast.js";
 
 const orb = document.getElementById("orb");
 const caption = document.getElementById("caption");
@@ -8,6 +9,7 @@ const notice = document.getElementById("notice");
 const feed = document.getElementById("transcript");
 const settingsLink = document.getElementById("settings-link");
 const visual = new StormOrb(orb);
+const taskToast = new TaskToast();
 
 const CAPTIONS = {
   idle: "tap to talk",
@@ -46,6 +48,7 @@ pipeline.addEventListener("input-level", (e) => {
 });
 pipeline.addEventListener("log", (e) => console.log("[pipeline]", e.detail.msg));
 pipeline.addEventListener("transcript", (e) => addMsg(e.detail.role, e.detail.text));
+pipeline.addEventListener("task", (e) => taskToast.update(e.detail));
 
 function addMsg(role, text) {
   const cls = role === "user" ? "user" : role === "tool" ? "tool" : "assistant";

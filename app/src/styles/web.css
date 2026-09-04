@@ -196,6 +196,38 @@ main {
   color: #f0c674;
   font-size: 0.85rem;
 }
+.task-toast {
+  position: fixed;
+  top: 4.25rem;
+  right: 1.25rem;
+  z-index: 20;
+  width: min(22rem, calc(100vw - 2.5rem));
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.8rem 0.95rem;
+  border: 1px solid rgba(134, 167, 255, 0.3);
+  border-radius: 14px;
+  background: rgba(20, 25, 36, 0.94);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(16px);
+}
+.task-toast[hidden] { display: none; }
+.task-toast-icon {
+  width: 0.7rem;
+  height: 0.7rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #82a7ff;
+  box-shadow: 0 0 0 5px rgba(130, 167, 255, 0.12);
+}
+.status-running .task-toast-icon { animation: task-pulse 1.2s ease-in-out infinite; }
+.status-completed .task-toast-icon { background: #65dc91; box-shadow: 0 0 0 5px rgba(101, 220, 145, 0.12); }
+.status-failed .task-toast-icon { background: #ff8585; box-shadow: 0 0 0 5px rgba(255, 133, 133, 0.12); }
+.task-toast-copy { min-width: 0; display: grid; gap: 0.15rem; }
+.task-toast strong { font-size: 0.86rem; font-weight: 650; }
+.task-toast small { overflow: hidden; color: #aeb9cc; font-size: 0.75rem; text-overflow: ellipsis; white-space: nowrap; }
+@keyframes task-pulse { 50% { opacity: 0.45; transform: scale(0.75); } }
 #transcript {
   width: min(560px, 92vw);
   display: flex;
