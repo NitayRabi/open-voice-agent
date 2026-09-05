@@ -1,6 +1,17 @@
+import type { TaskDetail } from "./types.js";
+
+export interface TaskToastOptions {
+  /** Tighter layout for the small always-on-top bubble window. */
+  compact?: boolean;
+}
+
 export class TaskToast {
-  constructor({ compact = false } = {}) {
-    this.hideTimer = null;
+  private readonly el: HTMLDivElement;
+  private readonly compact: boolean;
+  private hideTimer: ReturnType<typeof setTimeout> | undefined;
+
+  constructor({ compact = false }: TaskToastOptions = {}) {
+    this.compact = compact;
     this.el = document.createElement("div");
     this.el.className = `task-toast${compact ? " compact" : ""}`;
     this.el.hidden = true;
@@ -10,11 +21,11 @@ export class TaskToast {
     document.body.append(this.el);
   }
 
-  update(task) {
+  update(task: TaskDetail): void {
     clearTimeout(this.hideTimer);
-    const title = this.el.querySelector("strong");
-    const detail = this.el.querySelector("small");
-    this.el.className = `task-toast${this.el.classList.contains("compact") ? " compact" : ""} status-${task.status}`;
+    const title = this.el.querySelector("strong")!;
+    const detail = this.el.querySelector("small")!;
+    this.el.className = `task-toast${this.compact ? " compact" : ""} status-${task.status}`;
     this.el.hidden = false;
 
     if (task.status === "running") {

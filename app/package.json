@@ -1,0 +1,16 @@
+{
+  "name": "open-voice-agent-ui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Frontend for the Open Voice Agent desktop app and embedded web server",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/copy-static.mjs --clean && tsc",
+    "dev": "node scripts/copy-static.mjs --clean && tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "node scripts/copy-static.mjs --clean --no-copy"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

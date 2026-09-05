@@ -136,35 +136,63 @@ void main() {
 }
 `;
 
-const STATES = { idle: 0, connecting: 1, listening: 2, user_speaking: 3,
-  thinking: 4, delegating: 5, speaking: 6, error: 7 };
+const STATES: Record<string, number> = {
+  idle: 0,
+  connecting: 1,
+  listening: 2,
+  user_speaking: 3,
+  thinking: 4,
+  delegating: 5,
+  speaking: 6,
+  error: 7,
+};
+
+/** The uniforms the fragment shader exposes. */
+type UniformName = "uResolution" | "uTime" | "uInput" | "uOutput" | "uState" | "uWave[0]";
 
 export class StormOrb {
-  constructor(element) {
+  readonly element: HTMLElement;
+  readonly canvas: HTMLCanvasElement;
+  /** null when WebGL2 is unavailable — callers fall back to the CSS orb. */
+  gl: WebGL2RenderingContext | null;
+
+  private program: WebGLProgram | null = null;
+  private uniforms: Record<UniformName, WebGLUniformLocation | null> | null = null;
+  private started = 0;
+  private state = 0;
+  private input = 0;
+  private output = 0;
+  private inputTarget = 0;
+  private outputTarget = 0;
+  private readonly wave = new Float32Array(128);
+  private readonly inputWave = new Float32Array(128);
+  private readonly outputWave = new Float32Array(128);
+
+  constructor(element: HTMLElement) {
     this.element = element;
     this.canvas = document.createElement("canvas");
     this.canvas.className = "storm-canvas";
     this.canvas.setAttribute("aria-hidden", "true");
     element.prepend(this.canvas);
     this.gl = this.canvas.getContext("webgl2", { alpha: true, antialias: true, premultipliedAlpha: true });
-    this.state = 0;
-    this.input = this.output = this.inputTarget = this.outputTarget = 0;
-    this.wave = new Float32Array(128);
-    this.inputWave = new Float32Array(128);
-    this.outputWave = new Float32Array(128);
-    if (!this.gl) { element.classList.add("orb-webgl-fallback"); this.canvas.remove(); return; }
+    if (!this.gl) { this._fallback(); return; }
+    const gl = this.gl;
     try {
-      this.program = this._program();
-      this.uniforms = Object.fromEntries(["uResolution","uTime","uInput","uOutput","uState","uWave[0]"].map(n => [n, this.gl.getUniformLocation(this.program, n)]));
-      const vertices = this.gl.createBuffer();
-      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, vertices);
-      this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), this.gl.STATIC_DRAW);
-      const position = this.gl.getAttribLocation(this.program, "position");
-      this.gl.enableVertexAttribArray(position);
-      this.gl.vertexAttribPointer(position, 2, this.gl.FLOAT, false, 0, 0);
+      this.program = this._program(gl);
+      this.uniforms = Object.fromEntries(
+        (["uResolution", "uTime", "uInput", "uOutput", "uState", "uWave[0]"] as UniformName[])
+          .map((n) => [n, gl.getUniformLocation(this.program!, n)]),
+      ) as Record<UniformName, WebGLUniformLocation | null>;
+      const vertices = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, vertices);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+      const position = gl.getAttribLocation(this.program, "position");
+      gl.enableVertexAttribArray(position);
+      gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
     } catch (error) {
       console.warn("Storm orb unavailable; using CSS fallback", error);
-      this.gl = null; element.classList.add("orb-webgl-fallback"); this.canvas.remove(); return;
+      this._fallback();
+      return;
     }
     this.started = performance.now();
     new ResizeObserver(() => this._resize()).observe(element);
@@ -173,50 +201,59 @@ export class StormOrb {
     requestAnimationFrame(this._frame);
   }
 
-  _shader(type, source) {
-    const shader = this.gl.createShader(type);
-    this.gl.shaderSource(shader, source); this.gl.compileShader(shader);
-    if (!this.gl.getShaderParameter(shader, this.gl.COMPILE_STATUS)) throw new Error(this.gl.getShaderInfoLog(shader));
+  private _fallback(): void {
+    this.gl = null;
+    this.element.classList.add("orb-webgl-fallback");
+    this.canvas.remove();
+  }
+
+  private _shader(gl: WebGL2RenderingContext, type: GLenum, source: string): WebGLShader {
+    const shader = gl.createShader(type);
+    if (!shader) throw new Error("could not create shader");
+    gl.shaderSource(shader, source); gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader) ?? "shader compile failed");
     return shader;
   }
-  _program() {
-    const p = this.gl.createProgram();
-    this.gl.attachShader(p, this._shader(this.gl.VERTEX_SHADER, VERTEX));
-    this.gl.attachShader(p, this._shader(this.gl.FRAGMENT_SHADER, FRAGMENT));
-    this.gl.linkProgram(p);
-    if (!this.gl.getProgramParameter(p, this.gl.LINK_STATUS)) throw new Error(this.gl.getProgramInfoLog(p));
-    this.gl.useProgram(p); return p;
+  private _program(gl: WebGL2RenderingContext): WebGLProgram {
+    const p = gl.createProgram();
+    if (!p) throw new Error("could not create program");
+    gl.attachShader(p, this._shader(gl, gl.VERTEX_SHADER, VERTEX));
+    gl.attachShader(p, this._shader(gl, gl.FRAGMENT_SHADER, FRAGMENT));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) ?? "program link failed");
+    gl.useProgram(p); return p;
   }
-  _resize() {
+  private _resize(): void {
     if (!this.gl) return;
     const size = this.canvas.getBoundingClientRect();
     const dpr = Math.min(devicePixelRatio || 1, 2);
     this.canvas.width = Math.round(size.width * dpr); this.canvas.height = Math.round(size.height * dpr);
     this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
   }
-  setState(state) { this.state = STATES[state] ?? 0; }
-  setInput(level, waveform) { this.inputTarget = Math.min(1, level * 7); this._setWave(this.inputWave, waveform); }
-  setOutput(level, waveform) { this.outputTarget = Math.min(1, level * 5); this._setWave(this.outputWave, waveform); }
-  _setWave(target, samples) {
+  setState(state: string): void { this.state = STATES[state] ?? 0; }
+  setInput(level: number, waveform?: ArrayLike<number>): void { this.inputTarget = Math.min(1, level * 7); this._setWave(this.inputWave, waveform); }
+  setOutput(level: number, waveform?: ArrayLike<number>): void { this.outputTarget = Math.min(1, level * 5); this._setWave(this.outputWave, waveform); }
+  private _setWave(target: Float32Array, samples?: ArrayLike<number>): void {
     if (!samples?.length) return;
-    for (let i = 0; i < 128; i++) target[i] = samples[Math.min(samples.length - 1, Math.floor(i * samples.length / 128))];
+    for (let i = 0; i < 128; i++) target[i] = samples[Math.min(samples.length - 1, Math.floor(i * samples.length / 128))]!;
   }
-  _frame(now) {
-    if (!this.gl) return;
+  private _frame(now: number): void {
+    const gl = this.gl;
+    if (!gl || !this.program || !this.uniforms) return;
     this.input += (this.inputTarget - this.input) * .24;
     this.output += (this.outputTarget - this.output) * .34;
     this.inputTarget *= .91; this.outputTarget *= .88;
     for (let i = 0; i < 128; i++) {
-      const target = this.state === 6 ? this.outputWave[i] : this.inputWave[i];
-      this.wave[i] += (target - this.wave[i]) * .42;
-      this.inputWave[i] *= .86; this.outputWave[i] *= .86;
+      const target = this.state === 6 ? this.outputWave[i]! : this.inputWave[i]!;
+      this.wave[i]! += (target - this.wave[i]!) * .42;
+      this.inputWave[i]! *= .86; this.outputWave[i]! *= .86;
     }
-    const gl = this.gl; gl.useProgram(this.program);
+    gl.useProgram(this.program);
     gl.uniform2f(this.uniforms.uResolution, this.canvas.width, this.canvas.height);
     gl.uniform1f(this.uniforms.uTime, (now - this.started) / 1000);
     gl.uniform1f(this.uniforms.uInput, this.input); gl.uniform1f(this.uniforms.uOutput, this.output);
     gl.uniform1f(this.uniforms.uState, this.state); gl.uniform1fv(this.uniforms["uWave[0]"], this.wave);
-    gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); gl.drawArrays(gl.TRIANGLES, 0, 3);
     requestAnimationFrame(this._frame);
   }
 }

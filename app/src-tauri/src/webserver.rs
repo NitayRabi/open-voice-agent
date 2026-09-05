@@ -22,7 +22,7 @@ use crate::brain;
 use crate::config::Settings;
 use crate::AppState;
 
-static UI: Dir = include_dir!("$CARGO_MANIFEST_DIR/../src");
+static UI: Dir = include_dir!("$CARGO_MANIFEST_DIR/../dist");
 
 const BRIDGED_EVENTS: &[&str] = &[
     "settings-changed",

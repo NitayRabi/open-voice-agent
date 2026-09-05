@@ -5,14 +5,42 @@
 // Adapted from huggingface/speech-to-speech (demo/worklets/mic-capture.js,
 // Apache-2.0): the target rate is configurable and defaults to 16 kHz.
 
+export {};
+
 const DEFAULT_TARGET_RATE = 16000;
 const DEFAULT_CHUNK_MS = 40;
 const GATE_ATTACK_MS = 5;
 const GATE_HOLD_MS = 250;
 const GATE_RELEASE_MS = 80;
 
+interface MicCaptureOptions extends AudioWorkletNodeOptions {
+  processorOptions?: { chunkMs?: number; targetRate?: number };
+}
+
+/** Commands the pipeline posts down to this processor. */
+type MicCaptureMessage =
+  | { kind: "enable"; value: boolean }
+  | { kind: "probe" }
+  | { kind: "gate"; enabled: boolean; thresholdDb: number };
+
 class MicCaptureProcessor extends AudioWorkletProcessor {
-  constructor(options) {
+  private readonly _targetRate: number;
+  private readonly _inputRate: number;
+  private readonly _ratio: number;
+  private readonly _chunkSamples: number;
+  private _scratch: Float32Array;
+  private readonly _decimated: Float32Array;
+  private _enabled = true;
+
+  private _gateEnabled = false;
+  private _thresholdLin = 0;
+  private _gateGain = 1;
+  private _holdRemaining = 0;
+  private readonly _attackCoef: number;
+  private readonly _releaseCoef: number;
+  private readonly _holdSamples: number;
+
+  constructor(options?: MicCaptureOptions) {
     super();
     const chunkMs = options?.processorOptions?.chunkMs ?? DEFAULT_CHUNK_MS;
     const requestedRate = Number(options?.processorOptions?.targetRate);
@@ -23,17 +51,12 @@ class MicCaptureProcessor extends AudioWorkletProcessor {
     this._chunkSamples = Math.round((this._targetRate * chunkMs) / 1000);
     this._scratch = new Float32Array(0);
     this._decimated = new Float32Array(this._chunkSamples);
-    this._enabled = true;
 
-    this._gateEnabled = false;
-    this._thresholdLin = 0;
-    this._gateGain = 1;
-    this._holdRemaining = 0;
     this._attackCoef = Math.exp(-1 / ((GATE_ATTACK_MS / 1000) * this._targetRate));
     this._releaseCoef = Math.exp(-1 / ((GATE_RELEASE_MS / 1000) * this._targetRate));
     this._holdSamples = Math.round((GATE_HOLD_MS / 1000) * this._targetRate);
 
-    this.port.onmessage = (e) => {
+    this.port.onmessage = (e: MessageEvent<MicCaptureMessage>) => {
       const data = e.data;
       if (data?.kind === "enable") this._enabled = !!data.value;
       else if (data?.kind === "probe") {
@@ -49,7 +72,7 @@ class MicCaptureProcessor extends AudioWorkletProcessor {
     };
   }
 
-  _ingest(incoming) {
+  private _ingest(incoming: Float32Array): void {
     if (incoming.length === 0) return;
     const next = new Float32Array(this._scratch.length + incoming.length);
     next.set(this._scratch, 0);
@@ -58,7 +81,7 @@ class MicCaptureProcessor extends AudioWorkletProcessor {
     this._maybeEmit();
   }
 
-  _maybeEmit() {
+  private _maybeEmit(): void {
     const r = this._ratio;
     const n = this._chunkSamples;
     const needIn = Math.ceil(n * r);
@@ -69,7 +92,7 @@ class MicCaptureProcessor extends AudioWorkletProcessor {
         const k = Math.round(r);
         for (let i = 0; i < n; i++) {
           let acc = 0;
-          for (let j = 0; j < k; j++) acc += this._scratch[i * k + j];
+          for (let j = 0; j < k; j++) acc += this._scratch[i * k + j]!;
           const s = acc / k;
           dec[i] = s;
           sumSq += s * s;
@@ -79,7 +102,7 @@ class MicCaptureProcessor extends AudioWorkletProcessor {
           const srcPos = i * r;
           const idx = Math.floor(srcPos);
           const frac = srcPos - idx;
-          const a = this._scratch[idx];
+          const a = this._scratch[idx]!;
           const b = this._scratch[idx + 1] ?? a;
           const s = a + (b - a) * frac;
           dec[i] = s;
@@ -100,7 +123,7 @@ class MicCaptureProcessor extends AudioWorkletProcessor {
       for (let i = 0; i < n; i++) {
         const coef = target > gain ? this._attackCoef : this._releaseCoef;
         gain = target + (gain - target) * coef;
-        const s = dec[i] * gain;
+        const s = dec[i]! * gain;
         const clamped = s < -1 ? -1 : s > 1 ? 1 : s;
         out[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
       }
@@ -114,7 +137,7 @@ class MicCaptureProcessor extends AudioWorkletProcessor {
     }
   }
 
-  process(inputs) {
+  process(inputs: Float32Array[][]): boolean {
     const input = inputs[0];
     if (!input || input.length === 0 || !input[0]) return true;
     const mono = input[0];

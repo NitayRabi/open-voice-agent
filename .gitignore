@@ -45,3 +45,4 @@ personaplex/ssl/
 app/src-tauri/target/
 app/src-tauri/gen/
 app/dist/
+app/*.tsbuildinfo

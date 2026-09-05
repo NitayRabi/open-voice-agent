@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "identifier": "ai.openvoice.agent",
   "build": {
-    "frontendDist": "../src"
+    "frontendDist": "../dist",
+    "beforeDevCommand": "npm run build",
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
     "withGlobalTauri": true,

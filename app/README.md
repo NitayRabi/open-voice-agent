@@ -15,7 +15,7 @@ task to the brain and speaks back the answer.
  bubble window ─┐                 ws://…/v1/realtime     ┌─ speech-to-speech serve ─┐
  browser  /     ├─ VoicePipeline ───────────────────────▶│  VAD · STT · LLM · TTS    │
  browser  :port ┘  mic + playback ◀──────────────────────│  Parakeet · LLM · TTS   │
-        │           (same JS, either Tauri IPC or /api)  └──────────────────────────┘
+        │           (same TS, either Tauri IPC or /api)  └──────────────────────────┘
         │ voice model calls delegate_task(request)
         ▼
    Rust `delegate` ──▶  POST {brain_base_url}/chat/completions   (llama.cpp / vLLM / OpenAI / …)
@@ -27,13 +27,15 @@ task to the brain and speaks back the answer.
 
 | Path | Role |
 |---|---|
-| `src/` | frontend (no bundler — plain ES modules, `withGlobalTauri`) |
-| `src/bubble.html` · `bubble.js` | the floating always-on-top orb (desktop) |
-| `src/web.html` · `web.js` | the same orb as a full-page web app (served over HTTP) |
-| `src/index.html` · `settings.js` | first-run setup and settings (Speech / Delegation / Models / Web / Log) |
-| `src/lib/tauri.js` | dual bridge — Tauri IPC in the app, `/api` + long-poll in a browser |
-| `src/lib/pipeline.js` | mic → realtime WS → speaker, VAD turns, tool-call delegation |
+| `src/` | frontend sources — TypeScript, no bundler, `withGlobalTauri` |
+| `src/bubble.html` · `bubble.ts` | the floating always-on-top orb (desktop) |
+| `src/web.html` · `web.ts` | the same orb as a full-page web app (served over HTTP) |
+| `src/index.html` · `settings.ts` | first-run setup and settings (Speech / Delegation / Models / Web / Log) |
+| `src/lib/tauri.ts` | dual bridge — Tauri IPC in the app, `/api` + long-poll in a browser |
+| `src/lib/pipeline.ts` | mic → realtime WS → speaker, VAD turns, tool-call delegation |
+| `src/lib/types.ts` | the payload shapes shared with Rust (mirrors `config.rs` / `assets.rs`) |
 | `src/worklets/` | 16 kHz mic capture + jitter-buffered playback (adapted from `huggingface/speech-to-speech`, Apache-2.0) |
+| `dist/` | `tsc` output + copied HTML/CSS/assets — what Tauri and the web server serve (git-ignored) |
 | `src-tauri/src/lib.rs` | windows, tray, global hotkey, commands |
 | `src-tauri/src/brain.rs` | delegation: one call to an OpenAI-compatible `/chat/completions` |
 | `src-tauri/src/assets.rs` | model download manager (resume, verify, progress) |
@@ -70,7 +72,7 @@ task to the brain and speaks back the answer.
   see [What ships vs. what you download](#what-ships-vs-what-you-download).
 - **Web UI** — the *Web* tab turns on an embedded server that serves the exact
   same UI over HTTP: the voice orb at `/`, the config screen at `/settings`.
-  Same origin, one binary, no build step. The frontend auto-detects: Tauri IPC
+  Same origin, one binary — `dist/` is embedded at compile time. The frontend auto-detects: Tauri IPC
   in the desktop windows, `fetch('/api/…')` + a `GET /api/events?since=` long-poll
   in a browser. Config and delegation are shared across every client.
 
@@ -137,6 +139,7 @@ delegation at `http://127.0.0.1:<port>/v1`.
 ## Prerequisites
 
 - Rust ≥ 1.77, a C toolchain.
+- Node ≥ 20 + npm, to compile the TypeScript frontend.
 - **Linux:** GTK 3, WebKitGTK 4.1, libsoup3 + `-devel`/`-dev` packages.
   Fedora: `sudo dnf install webkit2gtk4.1-devel gtk3-devel libsoup3-devel
   libappindicator-gtk3-devel librsvg2-devel libxdo-devel`.
@@ -152,16 +155,32 @@ delegation at `http://127.0.0.1:<port>/v1`.
 ```bash
 ./scripts/setup-build-sysroot.sh
 source ./scripts/build-env.sh      # sets PKG_CONFIG_* / LD_LIBRARY_PATH / RUSTFLAGS
+npm ci && npm run build            # the frontend, into dist/
 cd src-tauri && cargo build --release
 ```
 
 ## Build & run
 
+The frontend compiles with `tsc` into `dist/`, which Tauri serves and
+`webserver.rs` embeds with `include_dir!`. `cargo tauri dev` / `cargo tauri build`
+run that step for you (`beforeDevCommand` / `beforeBuildCommand`); a bare
+`cargo build` needs it done first.
+
 ```bash
+npm ci                               # once — installs TypeScript
+
 cargo tauri dev                      # dev, webview hot reload
 cargo tauri build                    # .deb / .rpm / .AppImage
 # or just the binary:
-cd src-tauri && cargo build --release && ./target/release/open-voice-agent
+npm run build && cd src-tauri && cargo build --release && ./target/release/open-voice-agent
+```
+
+Frontend-only loops:
+
+```bash
+npm run build                        # clean dist/, copy static files, compile
+npm run dev                          # the same, then tsc --watch
+npm run typecheck                    # tsc --noEmit
 ```
 
 First-run setup starts the speech pipeline automatically. For low-level

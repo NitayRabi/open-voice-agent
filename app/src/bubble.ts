@@ -2,14 +2,16 @@ import { VoicePipeline } from "./lib/pipeline.js";
 import { getSettings, delegate, listen, emit, invoke, currentWindow, hasTauri } from "./lib/tauri.js";
 import { StormOrb } from "./lib/storm-orb.js";
 import { TaskToast } from "./lib/task-toast.js";
+import { element } from "./lib/dom.js";
+import type { PipelineState, Settings } from "./lib/types.js";
 
-const orb = document.getElementById("orb");
-const gear = document.getElementById("gear");
-const caption = document.getElementById("caption");
+const orb = element("orb");
+const gear = element("gear");
+const caption = element("caption");
 const visual = new StormOrb(orb);
 const taskToast = new TaskToast({ compact: true });
 
-const CAPTIONS = {
+const CAPTIONS: Record<PipelineState, string> = {
   idle: "tap to talk",
   connecting: "connecting…",
   listening: "listening",
@@ -24,19 +26,19 @@ const pipeline = new VoicePipeline({
   delegate: (request) => delegate(request),
 });
 
-let settings = null;
-async function loadSettings() {
-  settings = await getSettings();
+async function loadSettings(): Promise<Settings> {
+  const settings = await getSettings();
   pipeline.configure(settings);
+  return settings;
 }
 
-function setCaption(state) {
+function setCaption(state: PipelineState): void {
   caption.textContent = CAPTIONS[state] ?? state;
 }
 
 pipeline.addEventListener("state", (e) => {
   const { state } = e.detail;
-  orb.className = `orb state-${state}${pipeline._muted ? " state-muted" : ""}${visual.gl ? "" : " orb-webgl-fallback"}`;
+  orb.className = `orb state-${state}${pipeline.muted ? " state-muted" : ""}${visual.gl ? "" : " orb-webgl-fallback"}`;
   visual.setState(state);
   setCaption(state);
 });
@@ -60,20 +62,30 @@ pipeline.addEventListener("task", (e) => taskToast.update(e.detail));
 
 // ── input handling: quick tap = toggle, drag = move window ────────────────
 
-let down = null;
+interface PointerOrigin {
+  x: number;
+  y: number;
+  t: number;
+  dragging: boolean;
+}
+
+const onGear = (target: EventTarget | null): boolean =>
+  target instanceof Element && !!target.closest("#gear");
+
+let down: PointerOrigin | null = null;
 orb.addEventListener("pointerdown", (ev) => {
-  if (ev.target.closest("#gear")) return;
+  if (onGear(ev.target)) return;
   down = { x: ev.clientX, y: ev.clientY, t: Date.now(), dragging: false };
 });
 orb.addEventListener("pointermove", (ev) => {
   if (!down || down.dragging) return;
   if (Math.hypot(ev.clientX - down.x, ev.clientY - down.y) > 6) {
     down.dragging = true;
-    currentWindow()?.startDragging?.();
+    void currentWindow()?.startDragging?.();
   }
 });
 orb.addEventListener("pointerup", async (ev) => {
-  if (ev.target.closest("#gear")) return;
+  if (onGear(ev.target)) return;
   const d = down;
   down = null;
   if (!d || d.dragging) return;
@@ -88,7 +100,7 @@ orb.addEventListener("pointerup", async (ev) => {
 
 gear.addEventListener("click", (ev) => {
   ev.stopPropagation();
-  invoke("show_settings").catch((e) => console.error(e));
+  invoke("show_settings").catch((e: unknown) => console.error(e));
 });
 orb.addEventListener("contextmenu", (ev) => {
   ev.preventDefault();
@@ -97,26 +109,26 @@ orb.addEventListener("contextmenu", (ev) => {
 
 // ── wiring to the Rust side ──────────────────────────────────────────────
 
-listen("speech-toggle", async () => {
+void listen("speech-toggle", async () => {
   try {
     await pipeline.toggle();
   } catch (e) {
     console.error(e);
   }
 });
-listen("settings-changed", async () => {
+void listen("settings-changed", async () => {
   const wasRunning = pipeline.running;
   await loadSettings();
   if (wasRunning) {
     pipeline.stop();
-    setTimeout(() => pipeline.start().catch((e) => console.error(e)), 250);
+    setTimeout(() => pipeline.start().catch((e: unknown) => console.error(e)), 250);
   }
 });
 
-await loadSettings();
+const settings = await loadSettings();
 setCaption("idle");
 
-if (settings?.autostart_listening) {
+if (settings.autostart_listening) {
   // give the backend a moment, then try; errors just leave the orb idle
   setTimeout(() => pipeline.start().catch(() => {}), 1200);
 }

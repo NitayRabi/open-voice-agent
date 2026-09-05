@@ -2,16 +2,18 @@ import { VoicePipeline } from "./lib/pipeline.js";
 import { getSettings, delegate, listen } from "./lib/tauri.js";
 import { StormOrb } from "./lib/storm-orb.js";
 import { TaskToast } from "./lib/task-toast.js";
+import { element } from "./lib/dom.js";
+import { errorText } from "./lib/errors.js";
+import type { PipelineState, TranscriptDetail } from "./lib/types.js";
 
-const orb = document.getElementById("orb");
-const caption = document.getElementById("caption");
-const notice = document.getElementById("notice");
-const feed = document.getElementById("transcript");
-const settingsLink = document.getElementById("settings-link");
+const orb = element("orb");
+const caption = element("caption");
+const notice = element("notice");
+const feed = element("transcript");
 const visual = new StormOrb(orb);
 const taskToast = new TaskToast();
 
-const CAPTIONS = {
+const CAPTIONS: Record<PipelineState, string> = {
   idle: "tap to talk",
   connecting: "connecting…",
   listening: "listening",
@@ -23,10 +25,9 @@ const CAPTIONS = {
 };
 
 const pipeline = new VoicePipeline({ delegate: (r) => delegate(r) });
-let settings = null;
 
-async function loadSettings() {
-  settings = await getSettings();
+async function loadSettings(): Promise<void> {
+  const settings = await getSettings();
   if (!settings.setup_completed) {
     location.replace("/settings?setup=1");
     return;
@@ -50,7 +51,7 @@ pipeline.addEventListener("log", (e) => console.log("[pipeline]", e.detail.msg))
 pipeline.addEventListener("transcript", (e) => addMsg(e.detail.role, e.detail.text));
 pipeline.addEventListener("task", (e) => taskToast.update(e.detail));
 
-function addMsg(role, text) {
+function addMsg(role: TranscriptDetail["role"], text: string): void {
   const cls = role === "user" ? "user" : role === "tool" ? "tool" : "assistant";
   const el = document.createElement("div");
   el.className = `msg ${cls}`;
@@ -59,37 +60,37 @@ function addMsg(role, text) {
   who.textContent = role;
   el.append(who, document.createTextNode(text));
   feed.append(el);
-  while (feed.children.length > 40) feed.firstChild.remove();
+  while (feed.children.length > 40) feed.firstChild?.remove();
   el.scrollIntoView({ block: "nearest" });
 }
 
-async function toggle() {
+async function toggle(): Promise<void> {
   try {
     await pipeline.toggle();
   } catch (err) {
     console.error(err);
     notice.hidden = false;
-    notice.textContent = String(err.message || err);
+    notice.textContent = errorText(err);
   }
 }
 
-orb.addEventListener("click", toggle);
+orb.addEventListener("click", () => void toggle());
 orb.addEventListener("keydown", (e) => {
   if (e.key === "Enter" || e.key === " ") {
     e.preventDefault();
-    toggle();
+    void toggle();
   }
 });
 
-listen("settings-changed", async () => {
+void listen("settings-changed", async () => {
   const wasRunning = pipeline.running;
   await loadSettings();
   if (wasRunning) {
     pipeline.stop();
-    setTimeout(() => pipeline.start().catch((e) => console.error(e)), 250);
+    setTimeout(() => pipeline.start().catch((e: unknown) => console.error(e)), 250);
   }
 });
-listen("speech-toggle", () => toggle());
+void listen("speech-toggle", () => void toggle());
 
 await loadSettings();
 

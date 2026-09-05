@@ -5,78 +5,162 @@
 // exactly what `speech-to-speech serve` exposes at /v1/realtime. Server-side VAD
 // drives the turns; we only stream PCM16 up and play PCM16 down.
 
-const b64FromBuf = (buf) => {
+import { errorText } from "./errors.js";
+import type {
+  AudioInputDevice,
+  LevelDetail,
+  PipelineState,
+  Settings,
+  TaskDetail,
+  TranscriptDetail,
+} from "./types.js";
+
+const b64FromBuf = (buf: ArrayBuffer): string => {
   const bytes = new Uint8Array(buf);
   let bin = "";
   for (let i = 0; i < bytes.length; i += 0x8000) {
-    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   }
   return btoa(bin);
 };
-const bytesFromB64 = (b64) => {
+const bytesFromB64 = (b64: string): Uint8Array => {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 };
 
+/** The subset of Realtime server events the pipeline reacts to. */
+interface ServerEvent {
+  type?: string;
+  delta?: string;
+  transcript?: string;
+  arguments?: string;
+  call_id?: string;
+  callId?: string;
+  error?: { message?: string };
+  response?: { status?: string; status_details?: unknown };
+}
+
+/** Messages posted from the mic-capture / audio-playback worklets. */
+interface CaptureMessage {
+  kind: "level" | "capture-config";
+  rms?: number;
+  inputRate?: number;
+  outputRate?: number;
+}
+
+export interface PipelineOptions {
+  /** Runs a delegated task and resolves with the spoken-back answer. */
+  delegate?: (request: string) => Promise<string>;
+  /** Directory holding the audio worklets; defaults to `../worklets/`. */
+  workletBase?: string | URL;
+}
+
+/** `detail` payload of each event the pipeline dispatches. */
+export interface PipelineEventMap {
+  state: CustomEvent<{ state: PipelineState }>;
+  log: CustomEvent<{ msg: string }>;
+  muted: CustomEvent<{ muted: boolean }>;
+  transcript: CustomEvent<TranscriptDetail>;
+  task: CustomEvent<TaskDetail>;
+  "input-level": CustomEvent<LevelDetail>;
+  "output-level": CustomEvent<LevelDetail>;
+}
+
 export class VoicePipeline extends EventTarget {
-  constructor(opts = {}) {
+  readonly opts: PipelineOptions;
+  settings: Settings | null = null;
+  state: PipelineState = "idle";
+
+  private _ws: WebSocket | null = null;
+  private _ctx: AudioContext | null = null;
+  private _stream: MediaStream | null = null;
+  private _capture: AudioWorkletNode | null = null;
+  private _playback: AudioWorkletNode | null = null;
+  private _micAnalyser: AnalyserNode | null = null;
+  private _outAnalyser: AnalyserNode | null = null;
+  private _levelRaf = 0;
+  private _closing = false;
+  private _muted = false;
+  private _reconnects = 0;
+  private _asstText = "";
+  private _responseActive = false;
+  private _queuedAgentReports: string[] = [];
+  private _nextTaskId = 1;
+
+  constructor(opts: PipelineOptions = {}) {
     super();
-    this.opts = opts; // { delegate?, workletBase? }
-    this.settings = null;
-    this.state = "idle";
-    this._ws = null;
-    this._ctx = null;
-    this._stream = null;
-    this._capture = null;
-    this._playback = null;
-    this._micAnalyser = null;
-    this._closing = false;
-    this._muted = false;
-    this._reconnects = 0;
-    this._pendingCalls = new Map(); // call_id -> { name, args }
-    this._asstText = "";
-    this._responseActive = false;
-    this._queuedAgentReports = [];
-    this._nextTaskId = 1;
+    this.opts = opts;
   }
 
-  configure(settings) {
+  configure(settings: Settings): void {
     this.settings = settings;
   }
 
-  get running() {
+  get running(): boolean {
     return this.state !== "idle" && this.state !== "error";
   }
 
-  _emit(name, detail) {
+  get muted(): boolean {
+    return this._muted;
+  }
+
+  // Typed overloads so listeners see the right `detail` for each event name.
+  override addEventListener<K extends keyof PipelineEventMap>(
+    type: K,
+    listener: (event: PipelineEventMap[K]) => void,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  override addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject | null,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  override addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject | null,
+    options?: boolean | AddEventListenerOptions,
+  ): void {
+    super.addEventListener(type, listener, options);
+  }
+
+  private _emit<K extends keyof PipelineEventMap>(
+    name: K,
+    detail: PipelineEventMap[K]["detail"],
+  ): void {
     this.dispatchEvent(new CustomEvent(name, { detail }));
   }
 
-  _setState(s) {
+  private _setState(s: PipelineState): void {
     if (this.state === s) return;
     this.state = s;
     this._emit("state", { state: s });
     if (s === "listening") this._flushAgentReport();
   }
 
-  _log(msg) {
+  private _log(msg: string): void {
     this._emit("log", { msg });
   }
 
-  async toggle() {
+  /** Settings, or a hard failure — every audio path needs them. */
+  private get _cfg(): Settings {
+    if (!this.settings) throw new Error("pipeline not configured");
+    return this.settings;
+  }
+
+  async toggle(): Promise<void> {
     if (this.running) this.stop();
     else await this.start();
   }
 
-  setMuted(m) {
+  setMuted(m: boolean): void {
     this._muted = m;
     this._capture?.port.postMessage({ kind: "enable", value: !m });
     this._emit("muted", { muted: m });
   }
 
-  async start() {
+  async start(): Promise<void> {
     if (this.running) return;
     if (!this.settings) throw new Error("pipeline not configured");
     this._closing = false;
@@ -86,14 +170,14 @@ export class VoicePipeline extends EventTarget {
       await this._setupAudio();
       await this._connectRealtime();
     } catch (e) {
-      this._log(`start failed: ${e.message || e}`);
+      this._log(`start failed: ${errorText(e)}`);
       this._setState("error");
       this.stop();
       throw e;
     }
   }
 
-  stop() {
+  stop(): void {
     this._closing = true;
     try {
       this._ws?.close();
@@ -103,84 +187,97 @@ export class VoicePipeline extends EventTarget {
     this._stream = null;
     this._capture?.disconnect();
     this._playback?.disconnect();
-    this._capture = this._playback = this._micAnalyser = this._outAnalyser = null;
+    this._capture = null;
+    this._playback = null;
+    this._micAnalyser = null;
+    this._outAnalyser = null;
     cancelAnimationFrame(this._levelRaf);
-    if (this._ctx && this._ctx.state !== "closed") this._ctx.close();
+    if (this._ctx && this._ctx.state !== "closed") void this._ctx.close();
     this._ctx = null;
     this._setState("idle");
   }
 
   // ── audio graph ─────────────────────────────────────────────────────────
 
-  async _setupAudio() {
+  private async _setupAudio(): Promise<void> {
+    const cfg = this._cfg;
     const base = this.opts.workletBase || new URL("../worklets/", import.meta.url);
-    const rate = this.settings.sample_rate || 16000;
-    const audio = {
+    const rate = cfg.sample_rate || 16000;
+    const audio: MediaTrackConstraints = {
       channelCount: 1,
       echoCancellation: true,
       noiseSuppression: true,
       autoGainControl: true,
     };
-    if (this.settings.mic_device_id) audio.deviceId = { exact: this.settings.mic_device_id };
+    if (cfg.mic_device_id) audio.deviceId = { exact: cfg.mic_device_id };
     this._stream = await navigator.mediaDevices.getUserMedia({ audio });
 
-    this._ctx = new AudioContext({ latencyHint: "interactive" });
-    if (this._ctx.state === "suspended") await this._ctx.resume().catch(() => {});
-    const micSrc = this._ctx.createMediaStreamSource(this._stream);
-    this._micAnalyser = this._ctx.createAnalyser();
-    this._micAnalyser.fftSize = 512;
-    micSrc.connect(this._micAnalyser);
+    const ctx = new AudioContext({ latencyHint: "interactive" });
+    this._ctx = ctx;
+    if (ctx.state === "suspended") await ctx.resume().catch(() => {});
+    const micSrc = ctx.createMediaStreamSource(this._stream);
+    const micAnalyser = ctx.createAnalyser();
+    micAnalyser.fftSize = 512;
+    micSrc.connect(micAnalyser);
+    this._micAnalyser = micAnalyser;
 
-    await this._ctx.audioWorklet.addModule(new URL("mic-capture.js", base));
-    await this._ctx.audioWorklet.addModule(new URL("audio-playback.js", base));
+    await ctx.audioWorklet.addModule(new URL("mic-capture.js", base));
+    await ctx.audioWorklet.addModule(new URL("audio-playback.js", base));
 
-    this._capture = new AudioWorkletNode(this._ctx, "mic-capture", {
+    const capture = new AudioWorkletNode(ctx, "mic-capture", {
       numberOfInputs: 1,
       numberOfOutputs: 0,
       processorOptions: { chunkMs: 40, targetRate: rate },
     });
-    const gateOn = this.settings.noise_gate_db > -99;
-    this._capture.port.postMessage({
+    this._capture = capture;
+    const gateOn = cfg.noise_gate_db > -99;
+    capture.port.postMessage({
       kind: "gate",
       enabled: gateOn,
-      thresholdDb: this.settings.noise_gate_db,
+      thresholdDb: cfg.noise_gate_db,
     });
-    this._capture.port.onmessage = (e) => {
+    capture.port.onmessage = (e: MessageEvent<ArrayBuffer | CaptureMessage>) => {
       const d = e.data;
       if (d instanceof ArrayBuffer) this._onMicChunk(d);
       // UI metering is emitted by the analyser pump below, together with the
       // actual waveform samples used by the orb boundary.
     };
-    micSrc.connect(this._capture);
+    micSrc.connect(capture);
 
-    this._playback = new AudioWorkletNode(this._ctx, "audio-playback", {
+    const playback = new AudioWorkletNode(ctx, "audio-playback", {
       numberOfInputs: 0,
       numberOfOutputs: 1,
       outputChannelCount: [1],
     });
-    this._playback.port.postMessage({ kind: "config", inputRate: rate });
-    const outAnalyser = this._ctx.createAnalyser();
+    this._playback = playback;
+    playback.port.postMessage({ kind: "config", inputRate: rate });
+    const outAnalyser = ctx.createAnalyser();
     outAnalyser.fftSize = 512;
-    this._playback.connect(outAnalyser);
-    outAnalyser.connect(this._ctx.destination);
+    playback.connect(outAnalyser);
+    outAnalyser.connect(ctx.destination);
     this._outAnalyser = outAnalyser;
     this._startLevelPump();
 
-    if (this._muted) this._capture.port.postMessage({ kind: "enable", value: false });
+    if (this._muted) capture.port.postMessage({ kind: "enable", value: false });
   }
 
-  _startLevelPump() {
-    const outBuf = new Uint8Array(this._outAnalyser.frequencyBinCount);
-    const inBuf = new Uint8Array(this._micAnalyser.frequencyBinCount);
-    const measure = (analyser, buf) => {
+  private _startLevelPump(): void {
+    const outAnalyser = this._outAnalyser;
+    const micAnalyser = this._micAnalyser;
+    if (!outAnalyser || !micAnalyser) return;
+    const outBuf = new Uint8Array(outAnalyser.frequencyBinCount);
+    const inBuf = new Uint8Array(micAnalyser.frequencyBinCount);
+    const measure = (analyser: AnalyserNode, buf: Uint8Array<ArrayBuffer>): LevelDetail => {
       analyser.getByteTimeDomainData(buf);
       let sum = 0;
       const waveform = new Float32Array(128);
       for (let i = 0; i < buf.length; i++) {
-        const sample = (buf[i] - 128) / 128;
+        const sample = (buf[i]! - 128) / 128;
         sum += sample * sample;
       }
-      for (let i = 0; i < 128; i++) waveform[i] = (buf[Math.floor(i * buf.length / 128)] - 128) / 128;
+      for (let i = 0; i < 128; i++) {
+        waveform[i] = (buf[Math.floor((i * buf.length) / 128)]! - 128) / 128;
+      }
       return { rms: Math.sqrt(sum / buf.length), waveform };
     };
     const tick = () => {
@@ -192,7 +289,7 @@ export class VoicePipeline extends EventTarget {
     tick();
   }
 
-  _onMicChunk(arrayBuffer) {
+  private _onMicChunk(arrayBuffer: ArrayBuffer): void {
     if (this._muted) return;
     if (this._ws?.readyState === WebSocket.OPEN) {
       this._ws.send(
@@ -201,7 +298,7 @@ export class VoicePipeline extends EventTarget {
     }
   }
 
-  _playPcm16(bytes) {
+  private _playPcm16(bytes: Uint8Array): void {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const samples = new Float32Array(bytes.byteLength / 2);
     for (let i = 0; i < samples.length; i++) {
@@ -211,20 +308,21 @@ export class VoicePipeline extends EventTarget {
     this._playback?.port.postMessage({ kind: "audio", samples }, [samples.buffer]);
   }
 
-  _clearPlayback() {
+  private _clearPlayback(): void {
     this._playback?.port.postMessage({ kind: "clear" });
   }
 
   // ── Hugging Face realtime (OpenAI Realtime GA event set) ─────────────────
 
-  _toolsForSession() {
-    if (!this.settings.delegation_enabled) return [];
+  private _toolsForSession(): unknown[] {
+    const cfg = this._cfg;
+    if (!cfg.delegation_enabled) return [];
     return [
       {
         type: "function",
-        name: this.settings.delegation_tool_name || "delegate_task",
+        name: cfg.delegation_tool_name || "delegate_task",
         description:
-          this.settings.delegation_tool_description ||
+          cfg.delegation_tool_description ||
           "Hand a task to the more capable brain model when the user wants something actually done.",
         parameters: {
           type: "object",
@@ -240,14 +338,15 @@ export class VoicePipeline extends EventTarget {
     ];
   }
 
-  _sessionUpdate() {
-    const rate = this.settings.sample_rate || 16000;
+  private _sessionUpdate(): unknown {
+    const cfg = this._cfg;
+    const rate = cfg.sample_rate || 16000;
     return {
       type: "session.update",
       session: {
         type: "realtime",
         output_modalities: ["audio"],
-        instructions: this.settings.instructions || "",
+        instructions: cfg.instructions || "",
         audio: {
           input: {
             format: { type: "audio/pcm", rate },
@@ -256,18 +355,18 @@ export class VoicePipeline extends EventTarget {
           },
           output: {
             format: { type: "audio/pcm", rate },
-            voice: this.settings.voice || "Aiden",
+            voice: cfg.voice || "Aiden",
             speed: 1,
           },
         },
         tools: this._toolsForSession(),
-        tool_choice: this.settings.delegation_enabled ? "auto" : "none",
+        tool_choice: cfg.delegation_enabled ? "auto" : "none",
       },
     };
   }
 
-  async _connectRealtime() {
-    const url = this.settings.server_url;
+  private async _connectRealtime(): Promise<void> {
+    const url = this._cfg.server_url;
     this._log(`connecting to ${url}`);
     const ws = new WebSocket(url, [
       "realtime",
@@ -290,10 +389,10 @@ export class VoicePipeline extends EventTarget {
     ws.onerror = () => {
       if (!this._closing) this._log("websocket error");
     };
-    ws.onmessage = (ev) => {
-      let msg;
+    ws.onmessage = (ev: MessageEvent<string>) => {
+      let msg: ServerEvent;
       try {
-        msg = JSON.parse(ev.data);
+        msg = JSON.parse(ev.data) as ServerEvent;
       } catch {
         return;
       }
@@ -301,7 +400,7 @@ export class VoicePipeline extends EventTarget {
     };
   }
 
-  _maybeReconnect() {
+  private _maybeReconnect(): void {
     if (this._closing || this._reconnects >= 5) {
       this._setState("error");
       return;
@@ -313,7 +412,7 @@ export class VoicePipeline extends EventTarget {
     }, 1500 * this._reconnects);
   }
 
-  _onServerEvent(msg) {
+  private _onServerEvent(msg: ServerEvent): void {
     const t = msg.type || "";
     switch (t) {
       case "session.created":
@@ -351,13 +450,16 @@ export class VoicePipeline extends EventTarget {
       case "response.output_audio_transcript.done":
       case "response.audio_transcript.done":
         if (msg.transcript || this._asstText) {
-          this._emit("transcript", { role: "assistant", text: (msg.transcript || this._asstText).trim() });
+          this._emit("transcript", {
+            role: "assistant",
+            text: (msg.transcript || this._asstText).trim(),
+          });
         }
         break;
       case "response.function_call_arguments.delta":
         break;
       case "response.function_call_arguments.done":
-        this._handleFunctionCall(msg);
+        void this._handleFunctionCall(msg);
         break;
       case "response.done": {
         this._responseActive = false;
@@ -374,16 +476,20 @@ export class VoicePipeline extends EventTarget {
     }
   }
 
-  _sendWs(obj) {
+  private _sendWs(obj: unknown): void {
     if (this._ws?.readyState === WebSocket.OPEN) this._ws.send(JSON.stringify(obj));
   }
 
-  async _handleFunctionCall(msg) {
+  private async _handleFunctionCall(msg: ServerEvent): Promise<void> {
     const callId = msg.call_id || msg.callId || "";
     const taskId = callId || `task-${this._nextTaskId++}`;
     let request = "";
     try {
-      const args = JSON.parse(msg.arguments || "{}");
+      const args = JSON.parse(msg.arguments || "{}") as {
+        request?: string;
+        query?: string;
+        task?: string;
+      };
       request = args.request || args.query || args.task || msg.arguments || "";
     } catch {
       request = msg.arguments || "";
@@ -421,23 +527,25 @@ export class VoicePipeline extends EventTarget {
       const answer = await this.opts.delegate(request);
       this._emit("transcript", { role: "tool", text: `brain ✓ ${answer}` });
       this._emit("task", { id: taskId, request, status: "completed", result: answer });
-      if (this.settings.delegation_speak_result && answer) {
-        this._queueAgentReport(`The delegated task is complete. The agent answered: ${answer}. Relay the result to me in one or two natural spoken sentences.`);
-     }
+      if (this._cfg.delegation_speak_result && answer) {
+        this._queueAgentReport(
+          `The delegated task is complete. The agent answered: ${answer}. Relay the result to me in one or two natural spoken sentences.`,
+        );
+      }
     } catch (e) {
-      const err = e.message || String(e);
+      const err = errorText(e);
       this._emit("transcript", { role: "tool", text: `brain ✗ ${err}` });
       this._emit("task", { id: taskId, request, status: "failed", error: err });
       this._queueAgentReport(`The delegated task failed: ${err}. Let me know briefly.`);
     }
   }
 
-  _queueAgentReport(text) {
+  private _queueAgentReport(text: string): void {
     this._queuedAgentReports.push(text);
     this._flushAgentReport();
   }
 
-  _flushAgentReport() {
+  private _flushAgentReport(): void {
     if (this._responseActive || this.state !== "listening" || !this._queuedAgentReports.length) return;
     const text = this._queuedAgentReports.shift();
     this._sendWs({
@@ -452,10 +560,12 @@ export class VoicePipeline extends EventTarget {
     this._sendWs({ type: "response.create" });
   }
 
-  async listInputDevices() {
+  async listInputDevices(): Promise<AudioInputDevice[]> {
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
-      return devices.filter((d) => d.kind === "audioinput").map((d) => ({ id: d.deviceId, label: d.label }));
+      return devices
+        .filter((d) => d.kind === "audioinput")
+        .map((d) => ({ id: d.deviceId, label: d.label }));
     } catch {
       return [];
     }
