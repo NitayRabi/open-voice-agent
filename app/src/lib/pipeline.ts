@@ -341,6 +341,11 @@ export class VoicePipeline extends EventTarget {
   private _sessionUpdate(): unknown {
     const cfg = this._cfg;
     const rate = cfg.sample_rate || 16000;
+    // OpenAI's Realtime schema only permits an explicit PCM rate of 24 kHz.
+    // The local speech-to-speech server uses 16 kHz natively when `format` is
+    // omitted, so spelling out 16 kHz makes Pydantic reject the *entire*
+    // session.update (including instructions and tools).
+    const pcmFormat = rate === 16000 ? {} : { format: { type: "audio/pcm", rate } };
     return {
       type: "session.update",
       session: {
@@ -349,12 +354,12 @@ export class VoicePipeline extends EventTarget {
         instructions: cfg.instructions || "",
         audio: {
           input: {
-            format: { type: "audio/pcm", rate },
+            ...pcmFormat,
             transcription: { model: "whisper-1" },
             turn_detection: { type: "server_vad", interrupt_response: true },
           },
           output: {
-            format: { type: "audio/pcm", rate },
+            ...pcmFormat,
             voice: cfg.voice || "Aiden",
             speed: 1,
           },

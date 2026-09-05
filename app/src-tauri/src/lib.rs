@@ -42,7 +42,7 @@ fn save_settings(
     state: State<'_, AppState>,
     mut settings: Settings,
 ) -> Result<(), String> {
-    settings.server_url = "ws://127.0.0.1:8766/v1/realtime".into();
+    settings.server_url = config::local_server_url();
     if settings.web_enabled
         && settings.web_bind.trim() != "127.0.0.1"
         && settings.web_token.trim().is_empty()

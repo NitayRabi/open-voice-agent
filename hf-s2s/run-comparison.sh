@@ -6,6 +6,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 UPSTREAM="$ROOT/.tmp/speech-to-speech"
 VENV="$UPSTREAM/.venv"
 SSL_DIR="${SSL_DIR:-$ROOT/personaplex/ssl}"
+# The desktop app overrides these with the exact cert and key it serves the
+# web UI with, so the page and the wss endpoint present one identity and a
+# browser only has to trust a certificate once. Standalone, they fall back to
+# the development cert next to this repo.
+SSL_CERT="${SSL_CERT:-$SSL_DIR/cert.pem}"
+SSL_KEY="${SSL_KEY:-$SSL_DIR/key.pem}"
 LAN_IP="${HF_S2S_LAN_IP:-192.168.68.46}"
 BACKEND_PORT="${HF_S2S_BACKEND_PORT:-8766}"
 WSS_PORT="${HF_S2S_WSS_PORT:-8765}"
@@ -106,10 +112,26 @@ for _ in $(seq 1 600); do
   sleep 1
 done
 
-socat \
-  "OPENSSL-LISTEN:${WSS_PORT},reuseaddr,fork,cert=${SSL_DIR}/cert.pem,key=${SSL_DIR}/key.pem,verify=0" \
-  "TCP:127.0.0.1:${BACKEND_PORT}" &
-children+=("$!")
+# The backend binds loopback and speaks plain ws. Everything a browser on another
+# device can reach goes through this TLS wrapper, so without a usable cert there
+# is nothing to wrap: say so loudly and skip it rather than leaving a plaintext
+# listener, or one holding a certificate that does not match the page's.
+if [[ -r "$SSL_CERT" && -r "$SSL_KEY" ]]; then
+  socat \
+    "OPENSSL-LISTEN:${WSS_PORT},reuseaddr,fork,cert=${SSL_CERT},key=${SSL_KEY},verify=0" \
+    "TCP:127.0.0.1:${BACKEND_PORT}" &
+  socat_pid="$!"
+  children+=("$socat_pid")
+
+  sleep 0.5
+  if ! kill -0 "$socat_pid" 2>/dev/null; then
+    echo "socat could not open wss://0.0.0.0:${WSS_PORT} with ${SSL_CERT}" >&2
+    exit 1
+  fi
+else
+  echo "No readable TLS cert/key (${SSL_CERT}, ${SSL_KEY})." >&2
+  echo "Skipping the wss://:${WSS_PORT} wrapper and the LAN UI; only localhost can reach the agent." >&2
+fi
 
 # Same-machine endpoint: localhost is a browser secure context, so microphone
 # access works without accepting a development certificate.
@@ -119,16 +141,19 @@ STARTUP_GREETING="" \
   --host 0.0.0.0 --port "$UI_PORT" &
 children+=("$!")
 
-# Optional LAN endpoint for another device. It uses the existing development
-# certificate and therefore requires accepting that certificate once.
-SPEECH_TO_SPEECH_URL="wss://${LAN_IP}:${WSS_PORT}/v1/realtime" \
-STARTUP_GREETING="" \
-"$VENV/bin/uvicorn" --app-dir demo server:app \
-  --host 0.0.0.0 --port "$LAN_UI_PORT" \
-  --ssl-certfile "${SSL_DIR}/cert.pem" \
-  --ssl-keyfile "${SSL_DIR}/key.pem" &
-children+=("$!")
-
 echo "HF cascaded voice comparison -> http://localhost:${UI_PORT}/"
-echo "HF cascaded voice comparison (LAN) -> https://${LAN_IP}:${LAN_UI_PORT}/"
+
+# Optional LAN endpoint for another device, behind the same certificate as the
+# wss wrapper above. Requires accepting that certificate once.
+if [[ -r "$SSL_CERT" && -r "$SSL_KEY" ]]; then
+  SPEECH_TO_SPEECH_URL="wss://${LAN_IP}:${WSS_PORT}/v1/realtime" \
+  STARTUP_GREETING="" \
+  "$VENV/bin/uvicorn" --app-dir demo server:app \
+    --host 0.0.0.0 --port "$LAN_UI_PORT" \
+    --ssl-certfile "$SSL_CERT" \
+    --ssl-keyfile "$SSL_KEY" &
+  children+=("$!")
+
+  echo "HF cascaded voice comparison (LAN) -> https://${LAN_IP}:${LAN_UI_PORT}/"
+fi
 wait -n "${children[@]}"

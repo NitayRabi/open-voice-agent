@@ -19,7 +19,7 @@ use tauri::{AppHandle, Emitter, Listener, Manager};
 use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::brain;
-use crate::config::Settings;
+use crate::config::{self, Settings};
 use crate::AppState;
 
 static UI: Dir = include_dir!("$CARGO_MANIFEST_DIR/../dist");
@@ -371,15 +371,9 @@ fn read_body(req: &mut Request) -> Value {
     serde_json::from_str(&s).unwrap_or(Value::Null)
 }
 
-fn browser_settings(req: &Request, cfg: &Settings) -> Settings {
-    let mut out = cfg.clone();
-    let raw_host = req
-        .headers()
-        .iter()
-        .find(|h| h.field.equiv("Host"))
-        .map(|h| h.value.as_str())
-        .unwrap_or("127.0.0.1");
-    let host = if raw_host.starts_with('[') {
+/// The `Host` header minus its port, keeping a bracketed IPv6 literal intact.
+fn host_of(raw_host: &str) -> String {
+    if raw_host.starts_with('[') {
         raw_host
             .split_once(']')
             .map(|(h, _)| format!("{h}]"))
@@ -390,15 +384,50 @@ fn browser_settings(req: &Request, cfg: &Settings) -> Settings {
             .filter(|(_, port)| port.parse::<u16>().is_ok())
             .map(|(host, _)| host.to_string())
             .unwrap_or_else(|| raw_host.to_string())
+    }
+}
+
+/// The realtime endpoint to hand a browser reaching us at `host`.
+///
+/// Scheme and port are one decision, not two. The socat wrapper on the wss port
+/// only exists when the launcher was given a cert (see `backend::start`); the
+/// backend port behind it is always plain ws and loopback-only. Deriving the
+/// scheme from the cert while hardcoding the TLS port sent browsers `ws://` into
+/// a TLS listener whenever web TLS was off — a handshake failure the page could
+/// only report as "connecting…" and then "disconnected".
+fn realtime_url(host: &str, cfg: &Settings) -> String {
+    let env_port = |key: &str, fallback: u16| {
+        cfg.launch_env
+            .get(key)
+            .and_then(|p| p.trim().parse::<u16>().ok())
+            .unwrap_or(fallback)
     };
-    let secure = !cfg.web_tls_cert.trim().is_empty();
-    let scheme = if secure { "wss" } else { "ws" };
-    let port = cfg
-        .launch_env
-        .get("HF_S2S_WSS_PORT")
-        .and_then(|p| p.parse::<u16>().ok())
-        .unwrap_or(8765);
-    out.server_url = format!("{scheme}://{host}:{port}/v1/realtime");
+    if !cfg.web_tls_cert.trim().is_empty() && !cfg.web_tls_key.trim().is_empty() {
+        format!(
+            "wss://{host}:{}/v1/realtime",
+            env_port("HF_S2S_WSS_PORT", config::WSS_PORT)
+        )
+    } else {
+        // No TLS wrapper to talk to. Loopback is the only reachable endpoint, and
+        // also the only origin a browser grants a microphone to without TLS, so a
+        // LAN client fails here the same way it already fails `isSecureContext`.
+        format!(
+            "ws://{host}:{}/v1/realtime",
+            env_port("HF_S2S_BACKEND_PORT", config::BACKEND_PORT)
+        )
+    }
+}
+
+fn browser_settings(req: &Request, cfg: &Settings) -> Settings {
+    let mut out = cfg.clone();
+    let raw_host = req
+        .headers()
+        .iter()
+        .find(|h| h.field.equiv("Host"))
+        .map(|h| h.value.as_str())
+        .unwrap_or("127.0.0.1");
+    let host = host_of(raw_host);
+    out.server_url = realtime_url(&host, cfg);
     out
 }
 
@@ -633,7 +662,56 @@ fn serve_static(path: &str, req: Request) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{form_param, pair_page, safe_next};
+    use super::{form_param, host_of, pair_page, realtime_url, safe_next};
+    use crate::config::Settings;
+
+    fn tls_settings() -> Settings {
+        Settings {
+            web_tls_cert: "/etc/ova/cert.pem".into(),
+            web_tls_key: "/etc/ova/key.pem".into(),
+            ..Settings::default()
+        }
+    }
+
+    #[test]
+    fn strips_the_port_from_the_host_header() {
+        assert_eq!(host_of("192.168.68.46:1730"), "192.168.68.46");
+        assert_eq!(host_of("agent.local"), "agent.local");
+        assert_eq!(host_of("[::1]:1730"), "[::1]");
+    }
+
+    /// The wss port is a TLS listener and the backend port is not, so the scheme
+    /// has to follow the port rather than being chosen independently of it.
+    #[test]
+    fn realtime_scheme_matches_the_port_it_names() {
+        let tls = realtime_url("192.168.68.46", &tls_settings());
+        assert_eq!(tls, "wss://192.168.68.46:8765/v1/realtime");
+
+        let plain = realtime_url("127.0.0.1", &Settings::default());
+        assert_eq!(plain, "ws://127.0.0.1:8766/v1/realtime");
+    }
+
+    #[test]
+    fn realtime_url_honours_the_launcher_port_overrides() {
+        let mut cfg = tls_settings();
+        cfg.launch_env.insert("HF_S2S_WSS_PORT".into(), "9443".into());
+        assert_eq!(realtime_url("host", &cfg), "wss://host:9443/v1/realtime");
+
+        let mut cfg = Settings::default();
+        cfg.launch_env.insert("HF_S2S_BACKEND_PORT".into(), "9766".into());
+        assert_eq!(realtime_url("host", &cfg), "ws://host:9766/v1/realtime");
+    }
+
+    /// A half-configured pair means the web server itself refuses to start with
+    /// TLS, so the URL must not promise a wss endpoint the launcher never opened.
+    #[test]
+    fn realtime_url_needs_both_cert_and_key_for_wss() {
+        let cfg = Settings {
+            web_tls_cert: "/etc/ova/cert.pem".into(),
+            ..Settings::default()
+        };
+        assert!(realtime_url("host", &cfg).starts_with("ws://"));
+    }
 
     #[test]
     fn parses_pairing_form() {

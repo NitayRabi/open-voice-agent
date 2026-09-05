@@ -9,8 +9,24 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
+/// Ports the bundled `hf-s2s/run-comparison.sh` stack listens on.
+///
+/// The speech backend itself binds loopback only and speaks plain ws. When a
+/// TLS cert is configured, the launcher additionally runs a socat wrapper on
+/// `WSS_PORT` that re-exposes it over TLS on every interface; that wrapper is
+/// the only realtime endpoint another device can reach. The scheme and the port
+/// must therefore be chosen together — see `webserver::browser_settings`.
+pub const BACKEND_PORT: u16 = 8766;
+pub const WSS_PORT: u16 = 8765;
+
+/// The loopback realtime endpoint. The speech stack is an implementation
+/// detail, not a user choice, so this is forced rather than edited.
+pub fn local_server_url() -> String {
+    format!("ws://127.0.0.1:{BACKEND_PORT}/v1/realtime")
+}
+
 fn d_server_url() -> String {
-    "ws://127.0.0.1:8766/v1/realtime".into()
+    local_server_url()
 }
 fn d_voice() -> String {
     "Aiden".into()
@@ -84,7 +100,7 @@ fn d_launch_cmd() -> Vec<String> {
     vec!["bash".into(), "hf-s2s/run-comparison.sh".into()]
 }
 fn d_health_url() -> String {
-    "http://127.0.0.1:8766/".into()
+    format!("http://127.0.0.1:{BACKEND_PORT}/")
 }
 fn d_speech_model() -> String {
     "qwen2.5-3b-instruct-q4km".into()
@@ -288,6 +304,7 @@ impl Settings {
             && self.speech_remote_model == o.speech_remote_model
             && self.speech_remote_api_key == o.speech_remote_api_key
             && self.web_tls_cert == o.web_tls_cert
+            && self.web_tls_key == o.web_tls_key
     }
 
     /// True when nothing that affects the embedded web server has changed.

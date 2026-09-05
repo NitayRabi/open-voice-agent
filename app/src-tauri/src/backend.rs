@@ -132,8 +132,18 @@ impl BackendManager {
                 })?;
             cmd.env("HF_S2S_LLM_MODEL", model);
         }
-        if let Some(tls_dir) = std::path::Path::new(cfg.web_tls_cert.trim()).parent() {
-            cmd.env("SSL_DIR", tls_dir);
+        // Hand the launcher the exact cert and key the web server serves the page
+        // with, so the socat wss wrapper and the page present one identity and the
+        // browser only has to trust a certificate once. Passing a *directory* used
+        // to be enough only by luck: the launcher looks for `cert.pem`/`key.pem`
+        // inside it, so any other filename silently fell back to the launcher's own
+        // development cert, which a remote browser rejects with no way to click
+        // through. With neither set, leave both unset — the launcher then skips the
+        // TLS wrapper entirely rather than serving a mismatched cert on it.
+        let (tls_cert, tls_key) = (cfg.web_tls_cert.trim(), cfg.web_tls_key.trim());
+        if !tls_cert.is_empty() && !tls_key.is_empty() {
+            cmd.env("SSL_CERT", tls_cert);
+            cmd.env("SSL_KEY", tls_key);
         }
 
         let mut child = cmd
