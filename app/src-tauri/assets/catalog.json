@@ -1,60 +1,40 @@
 {
-  "_comment": "Curated GGUF models the app can download on demand. Nothing here ships in the installer. Users can also add any Hugging Face repo+file or direct URL from the Models tab. Sizes are approximate; URLs are built as https://huggingface.co/{repo}/resolve/{revision}/{file}.",
+  "_comment": "Allowed on-demand downloads: passed the delegation smoke test and require no separate commercial license. Apache-2.0 obligations still apply. See app/docs/model-catalog.md. Revisions and SHA-256 hashes pin the files; no weights ship in the installer.",
   "models": [
     {
-      "id": "qwen2.5-1.5b-instruct-q4km",
-      "name": "Qwen2.5 1.5B Instruct — Q4_K_M",
-      "repo": "bartowski/Qwen2.5-1.5B-Instruct-GGUF",
-      "file": "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
-      "revision": "main",
-      "bytes": 1120000000,
-      "license": "Apache-2.0",
-      "roles": ["brain", "cascade_llm"],
-      "note": "Tiny local brain. Fits alongside a speech model. ~1.1 GB."
-    },
-    {
-      "id": "qwen2.5-3b-instruct-q4km",
-      "name": "Qwen2.5 3B Instruct — Q4_K_M",
-      "repo": "bartowski/Qwen2.5-3B-Instruct-GGUF",
-      "file": "Qwen2.5-3B-Instruct-Q4_K_M.gguf",
-      "revision": "main",
-      "bytes": 2100000000,
-      "license": "Apache-2.0",
-      "roles": ["brain", "cascade_llm"],
-      "note": "Good small default. ~2 GB."
-    },
-    {
-      "id": "qwen2.5-7b-instruct-q4km",
-      "name": "Qwen2.5 7B Instruct — Q4_K_M",
-      "repo": "bartowski/Qwen2.5-7B-Instruct-GGUF",
-      "file": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
-      "revision": "main",
-      "bytes": 4700000000,
-      "license": "Apache-2.0",
-      "roles": ["brain", "cascade_llm"],
-      "note": "Stronger local brain. ~4.7 GB."
-    },
-    {
-      "id": "llama-3.2-3b-instruct-q4km",
-      "name": "Llama 3.2 3B Instruct — Q4_K_M",
-      "repo": "bartowski/Llama-3.2-3B-Instruct-GGUF",
-      "file": "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
-      "revision": "main",
-      "bytes": 2020000000,
-      "license": "Llama 3.2 Community License",
-      "roles": ["brain", "cascade_llm"],
-      "note": "~2 GB."
-    },
-    {
       "id": "gemma-4-e4b-it-q4-0",
-      "name": "Gemma 4 E4B Instruct — Q4_0",
+      "name": "Gemma 4 E4B Instruct \u2014 Q4_0",
       "repo": "ggml-org/gemma-4-E4B-it-GGUF",
       "file": "gemma-4-E4B-it-Q4_0.gguf",
-      "revision": "main",
-      "bytes": 5100000000,
-      "license": "Gemma Terms of Use",
-      "roles": ["brain", "cascade_llm"],
-      "note": "Larger local conversational model. ~5 GB."
+      "revision": "b8093469224f83f5c38f691eb906c380e9e63114",
+      "bytes": 4590807392,
+      "sha256": "a555b900214b477d8880e7832e0b8925e139b0159640036b09fe472b6f2097f2",
+      "license": "Apache-2.0",
+      "badges": [
+        "recommended",
+        "smallest"
+      ],
+      "roles": [
+        "brain",
+        "cascade_llm"
+      ],
+      "note": "Start here for conversation and delegation. Smallest download in this catalog; memory use exceeds download size."
+    },
+    {
+      "id": "qwen3.6-35b-a3b-q4km",
+      "name": "Qwen3.6 35B A3B \u2014 Q4_K_M",
+      "repo": "bartowski/Qwen_Qwen3.6-35B-A3B-GGUF",
+      "file": "Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf",
+      "revision": "5c2410d71524f4f72b023ce8daf7a80528226d5f",
+      "bytes": 22285080192,
+      "sha256": "b46fedd33e0bfb0cae308aa3c158d0a4b2c4a1d2185a1ed6f093cdaf39064772",
+      "license": "Apache-2.0",
+      "badges": [],
+      "roles": [
+        "brain",
+        "cascade_llm"
+      ],
+      "note": "Larger alternative for capable hardware. Only 3B parameters are active per token, but all 35B weights need memory."
     }
   ]
 }

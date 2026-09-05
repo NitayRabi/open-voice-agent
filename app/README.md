@@ -118,14 +118,17 @@ endpoint. Same pattern as the whisper.cpp desktop apps.
 
 ### Models tab
 
-- Curated GGUF list (Qwen2.5 1.5B/3B/7B, Llama 3.2 3B, Gemma 4 E4B) with size +
-  license; **Add a model** takes any Hugging Face `repo` + `file` or a direct URL.
-- Downloads stream to `<id>.gguf.part`, **resume** via HTTP `Range`, verify the
-  GGUF magic (and sha256 when the catalog gives one), then rename into place.
+- **Gemma 4 E4B Q4_0** is **Recommended** and **Smallest** (4.59 GB download).
+  **Qwen3.6 35B A3B Q4_K_M** is the larger alternative (22.29 GB).
+- Both passed all eight intended delegation requests in the smoke test and use
+  Apache 2.0, with no separate commercial license. This is a small routing test,
+  not a general quality guarantee. See [selection evidence](docs/model-catalog.md).
+- Downloads are restricted to this catalog, pinned to upstream revisions and
+  SHA-256 hashes. They stream to `<id>.gguf.part` and resume via HTTP `Range`.
   Progress rides the `asset-progress` event; **Cancel** / **Delete** / **Forget**.
-- The curated models, including Gemma 4 E4B, download without a Hugging Face
-  token. Optional authentication is under **Advanced** for private/custom repos
-  and anonymous rate-limit issues.
+- No Hugging Face token is required. Optional authentication under **Advanced**
+  can help with anonymous rate limits. Existing custom entries and local GGUF
+  paths remain usable, but custom URL/repository downloads are no longer offered.
 
 ### Configuring the brain
 

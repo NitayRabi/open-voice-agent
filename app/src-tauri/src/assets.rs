@@ -1,7 +1,8 @@
 //! Model download manager. Nothing heavy ships in the installer — the app
 //! carries a small curated catalog (`assets/catalog.json`) and downloads GGUF
 //! weights on demand into the app data dir, with resume, progress events, and
-//! verification. Users can add any Hugging Face repo+file or direct URL.
+//! verification. Downloads are restricted to the curated catalog. Existing
+//! user-added files can still be used locally.
 //!
 //! Same idea as whisper.cpp desktop apps: pick a model, download it, or point
 //! at a remote endpoint instead.
@@ -25,6 +26,15 @@ use crate::AppState;
 const CATALOG_JSON: &str = include_str!("../assets/catalog.json");
 const CHUNK: usize = 256 * 1024;
 
+pub const RECOMMENDED_MODEL_ID: &str = "gemma-4-e4b-it-q4-0";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelBadge {
+    Recommended,
+    Smallest,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelEntry {
     pub id: String,
@@ -43,6 +53,8 @@ pub struct ModelEntry {
     pub sha256: String,
     #[serde(default)]
     pub license: String,
+    #[serde(default)]
+    pub badges: Vec<ModelBadge>,
     #[serde(default)]
     pub roles: Vec<String>,
     #[serde(default)]
@@ -103,6 +115,7 @@ fn load_user_models(app: &AppHandle) -> Vec<ModelEntry> {
             .into_iter()
             .map(|mut m| {
                 m.user = true;
+                m.badges.clear();
                 m
             })
             .collect(),
@@ -135,12 +148,11 @@ fn all_entries(app: &AppHandle) -> Vec<ModelEntry> {
     out
 }
 
-fn slugify(s: &str) -> String {
-    s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
-        .collect::<String>()
-        .trim_matches('-')
-        .replace("--", "-")
+fn downloadable_entry(id: &str) -> Result<ModelEntry, String> {
+    curated()
+        .into_iter()
+        .find(|m| m.id == id)
+        .ok_or_else(|| "Only models in the built-in catalog can be downloaded. Use an existing GGUF path for other models.".to_string())
 }
 
 fn gguf_file(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
@@ -179,6 +191,7 @@ impl AssetManager {
                 json!({
                     "id": m.id, "name": m.name, "repo": m.repo, "file": m.file,
                     "bytes": m.bytes, "license": m.license, "roles": m.roles,
+                    "badges": m.badges, "downloadable": !m.user,
                     "gated": m.gated, "note": m.note, "user": m.user,
                     "url": m.resolved_url(),
                     "installed": on_disk.is_some(),
@@ -191,48 +204,6 @@ impl AssetManager {
             })
             .collect();
         json!({ "dir": models_dir(app).ok(), "models": models })
-    }
-
-    pub fn add(&self, app: &AppHandle, spec: &Value) -> Result<String, String> {
-        let name = spec.get("name").and_then(Value::as_str).unwrap_or("").trim();
-        let repo = spec.get("repo").and_then(Value::as_str).unwrap_or("").trim();
-        let file = spec.get("file").and_then(Value::as_str).unwrap_or("").trim();
-        let url = spec.get("url").and_then(Value::as_str).unwrap_or("").trim();
-        if url.is_empty() && (repo.is_empty() || file.is_empty()) {
-            return Err("provide a Hugging Face repo + file, or a direct URL".into());
-        }
-        let base = if !name.is_empty() {
-            name.to_string()
-        } else if !file.is_empty() {
-            file.trim_end_matches(".gguf").to_string()
-        } else {
-            url.rsplit('/').next().unwrap_or("model").to_string()
-        };
-        let mut id = slugify(&base);
-        if id.is_empty() {
-            id = format!("model-{}", chrono_stamp());
-        }
-        let mut models = load_user_models(app);
-        if models.iter().any(|m| m.id == id) || curated().iter().any(|m| m.id == id) {
-            id = format!("{id}-{}", chrono_stamp());
-        }
-        models.push(ModelEntry {
-            id: id.clone(),
-            name: if name.is_empty() { base } else { name.to_string() },
-            repo: repo.to_string(),
-            file: file.to_string(),
-            revision: spec.get("revision").and_then(Value::as_str).unwrap_or("main").to_string(),
-            url: url.to_string(),
-            bytes: spec.get("bytes").and_then(Value::as_u64).unwrap_or(0),
-            sha256: spec.get("sha256").and_then(Value::as_str).unwrap_or("").to_string(),
-            license: spec.get("license").and_then(Value::as_str).unwrap_or("").to_string(),
-            roles: vec!["brain".into()],
-            gated: false,
-            note: String::new(),
-            user: true,
-        });
-        save_user_models(app, &models)?;
-        Ok(id)
     }
 
     pub fn forget(&self, app: &AppHandle, id: &str) -> Result<(), String> {
@@ -261,10 +232,7 @@ impl AssetManager {
     }
 
     pub fn download(&self, app: &AppHandle, id: &str) -> Result<(), String> {
-        let entry = all_entries(app)
-            .into_iter()
-            .find(|m| m.id == id)
-            .ok_or_else(|| format!("no model '{id}' in the catalog"))?;
+        let entry = downloadable_entry(id)?;
         {
             let mut jobs = self.jobs.lock();
             if jobs.contains_key(id) {
@@ -299,13 +267,6 @@ impl AssetManager {
         });
         Ok(())
     }
-}
-
-fn chrono_stamp() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0)
 }
 
 fn run_download(app: &AppHandle, entry: &ModelEntry, job: &Job, token: &str) -> Result<(), String> {
@@ -428,4 +389,63 @@ fn verify(dest: &PathBuf, entry: &ModelEntry) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_has_pinned_permissive_downloads_and_consistent_badges() {
+        let models = curated();
+        assert!(!models.is_empty());
+        let recommended: Vec<_> = models
+            .iter()
+            .filter(|m| m.badges.contains(&ModelBadge::Recommended))
+            .collect();
+        assert_eq!(recommended.len(), 1);
+        assert_eq!(recommended[0].id, RECOMMENDED_MODEL_ID);
+        assert_eq!(
+            crate::config::Settings::default().speech_model,
+            recommended[0].id
+        );
+        let smallest: Vec<_> = models
+            .iter()
+            .filter(|m| m.badges.contains(&ModelBadge::Smallest))
+            .collect();
+        assert_eq!(smallest.len(), 1);
+        assert_eq!(
+            smallest[0].bytes,
+            models.iter().map(|m| m.bytes).min().unwrap()
+        );
+        let mut ids = std::collections::HashSet::new();
+        for model in models {
+            assert!(ids.insert(model.id.clone()));
+            assert_eq!(model.license, "Apache-2.0");
+            assert!(!model.gated && !model.user);
+            assert_eq!(model.revision.len(), 40);
+            assert_eq!(model.sha256.len(), 64);
+            assert!(model
+                .revision
+                .chars()
+                .chain(model.sha256.chars())
+                .all(|c| c.is_ascii_hexdigit()));
+            assert!(model.bytes > 0);
+            assert!(downloadable_entry(&model.id).is_ok());
+        }
+    }
+
+    #[test]
+    fn download_allowlist_rejects_removed_custom_and_path_ids() {
+        for id in [
+            "qwen2.5-3b-instruct-q4km",
+            "lfm25-12b",
+            "user-custom",
+            "../model",
+            "/tmp/model.gguf",
+            "https://example.com/model.gguf",
+        ] {
+            assert!(downloadable_entry(id).is_err(), "accepted {id}");
+        }
+    }
 }

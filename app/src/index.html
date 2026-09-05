@@ -38,6 +38,7 @@
             <label>
               <span>Local model</span>
               <select id="setup_speech_model"></select>
+              <span id="setup_model_badges" class="model-badges"></span>
             </label>
             <div class="row">
               <button id="setup_download_speech" type="button" class="secondary">Download model</button>
@@ -279,26 +280,14 @@
         </p>
         <details class="add-model">
           <summary>Advanced: Hugging Face authentication</summary>
-          <p class="muted">The built-in models, including Gemma 4 E4B, do not require a token. Add one only for a private or separately gated repository, or if anonymous download limits become a problem.</p>
+          <p class="muted">The built-in models, including Gemma 4 E4B, do not require a token. Add one only if anonymous download limits become a problem.</p>
           <label>
             <span>Hugging Face token (optional)</span>
             <input id="hf_token" type="password" autocomplete="off" spellcheck="false" />
           </label>
         </details>
 
-        <details class="add-model">
-          <summary>Add a model</summary>
-          <div class="field-row">
-            <label class="field"><span>Name</span><input id="am_name" type="text" spellcheck="false" placeholder="My model" /></label>
-          </div>
-          <div class="field-row">
-            <label class="field"><span>HF repo</span><input id="am_repo" type="text" spellcheck="false" placeholder="bartowski/Qwen2.5-3B-Instruct-GGUF" /></label>
-            <label class="field"><span>File</span><input id="am_file" type="text" spellcheck="false" placeholder="Qwen2.5-3B-Instruct-Q4_K_M.gguf" /></label>
-          </div>
-          <label><span>…or direct URL</span><input id="am_url" type="text" spellcheck="false" placeholder="https://…/model.gguf" /></label>
-          <div class="row"><button id="am_add" type="button" class="secondary">Add</button></div>
-        </details>
-
+        <p class="muted">These models passed all 8 delegation requests in our smoke test and use Apache 2.0, with no separate commercial license. Recommended is our default; Smallest means the smallest download here. Existing GGUF paths remain available under Advanced.</p>
         <div id="model_list" class="model-list"></div>
       </section>
 

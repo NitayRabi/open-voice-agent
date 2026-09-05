@@ -90,6 +90,8 @@ export interface ModelInfo {
   file: string;
   bytes: number;
   license: string;
+  badges: ("recommended" | "smallest")[];
+  downloadable: boolean;
   roles: string[];
   gated: boolean;
   note: string;
@@ -107,14 +109,6 @@ export interface ModelInfo {
 export interface ModelsList {
   dir: string | null;
   models: ModelInfo[];
-}
-
-/** A Hugging Face repo + file, or a direct URL. */
-export interface ModelSpec {
-  name: string;
-  repo: string;
-  file: string;
-  url: string;
 }
 
 export interface AssetProgress {

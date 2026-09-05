@@ -4,7 +4,6 @@
 
 import type {
   AssetProgress,
-  ModelSpec,
   ModelsList,
   Settings,
   TranscriptDetail,
@@ -72,7 +71,6 @@ export interface Commands {
   show_settings: { args: void; result: void };
   quit_app: { args: void; result: void };
   models_list: { args: void; result: ModelsList };
-  model_add: { args: { spec: ModelSpec }; result: string };
   model_download: { args: { id: string }; result: void };
   model_cancel: { args: { id: string }; result: void };
   model_remove: { args: { id: string }; result: void };
@@ -101,7 +99,6 @@ const WEB: WebImpls = {
     location.href = "/settings";
   },
   models_list: () => api<ModelsList>("/api/models"),
-  model_add: ({ spec }) => api<string>("/api/models/add", { method: "POST", body: spec }),
   model_download: ({ id }) => api<void>("/api/models/download", { method: "POST", body: { id } }),
   model_cancel: ({ id }) => api<void>("/api/models/cancel", { method: "POST", body: { id } }),
   model_remove: ({ id }) => api<void>("/api/models/remove", { method: "POST", body: { id } }),

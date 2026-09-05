@@ -1,7 +1,7 @@
 import { getSettings, saveSettings, invoke, listen, isWeb } from "./lib/tauri.js";
 import { element as $, input as $in, select as $sel, valueElement } from "./lib/dom.js";
 import { errorText } from "./lib/errors.js";
-import type { ModelSource, ModelSpec, ModelsList, Settings } from "./lib/types.js";
+import type { ModelInfo, ModelSource, ModelsList, Settings } from "./lib/types.js";
 
 const logEl = $("log");
 const statusEl = $("status");
@@ -200,7 +200,7 @@ void listen("web-status", (e) => {
 // ── models ──────────────────────────────────────────────────────────────
 const fmtBytes = (n: number | null | undefined): string => {
   if (!n) return "";
-  const u = ["B", "KB", "MB", "GB"];
+  const u = ["B", "KiB", "MiB", "GiB"];
   let i = 0;
   while (n >= 1024 && i < u.length - 1) {
     n /= 1024;
@@ -208,6 +208,23 @@ const fmtBytes = (n: number | null | undefined): string => {
   }
   return `${n.toFixed(i ? 1 : 0)} ${u[i]}`;
 };
+
+function escapeHtml(value: string): string {
+  const span = document.createElement("span");
+  span.textContent = value;
+  return span.innerHTML;
+}
+
+function badges(model: ModelInfo): string {
+  return (model.badges || []).map((badge) => badge === "recommended"
+    ? '<span class="model-badge recommended">Recommended</span>'
+    : badge === "smallest" ? '<span class="model-badge smallest">Smallest</span>' : "").join("");
+}
+
+function modelLabel(model: ModelInfo): string {
+  const labels = (model.badges || []).map((badge) => badge === "recommended" ? "Recommended" : "Smallest");
+  return `${model.name}${labels.length ? ` (${labels.join(", ")})` : ""}`;
+}
 
 let modelsCache: ModelsList = { dir: null, models: [] };
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -233,8 +250,8 @@ async function renderModels(): Promise<void> {
         ? `<span class="tag off">downloading ${pct}%</span>`
         : `<span class="tag off">${fmtBytes(m.bytes) || "not installed"}</span>`;
     row.innerHTML = `
-      <div class="top"><span class="nm">${m.name}</span>${status}</div>
-      <div class="meta">${[m.license, m.gated ? "gated" : "", m.note].filter(Boolean).join(" · ")}</div>
+      <div class="top"><span class="nm">${escapeHtml(m.name)}</span>${badges(m)}${status}</div>
+      <div class="meta">${escapeHtml([m.license, m.gated ? "gated" : "", m.note].filter(Boolean).join(" · "))}</div>
       ${m.downloading ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ""}
       <div class="actions"></div>`;
     const actions = row.querySelector(".actions")!;
@@ -259,7 +276,7 @@ async function renderModels(): Promise<void> {
         await invoke("model_remove", { id: m.id });
         void renderModels();
       });
-    } else {
+    } else if (m.downloadable) {
       btn("Download", "secondary", () =>
         void invoke("model_download", { id: m.id }).catch((e: unknown) => flash(errorText(e))));
     }
@@ -286,10 +303,10 @@ function option(select: HTMLSelectElement, value: string, label: string): void {
 function populateSpeechModels(): void {
   const select = $sel("speech_model");
   const chosen = select.value || current.speech_model || "";
-  const compatible = modelsCache.models.filter((m) => m.roles?.includes("cascade_llm"));
+  const compatible = modelsCache.models.filter((m) => m.roles?.includes("cascade_llm") && (m.downloadable || m.installed));
   select.innerHTML = "";
   for (const m of compatible) {
-    option(select, m.id, `${m.name}${m.installed ? " — installed" : " — download required"}`);
+    option(select, m.id, `${modelLabel(m)}${m.installed ? " — installed" : " — download required"}`);
   }
   if (chosen && !compatible.some((m) => m.id === chosen)) {
     option(select, chosen, chosen.includes("/") ? chosen : `${chosen} (not installed)`);
@@ -304,7 +321,7 @@ function populateLocalModels(): void {
   const installed = modelsCache.models.filter((m) => m.installed);
   sel.innerHTML = "";
   for (const m of installed) {
-    option(sel, m.id, m.name);
+    option(sel, m.id, modelLabel(m));
   }
   // allow an arbitrary path that isn't in the catalog
   if (chosen && !installed.some((m) => m.id === chosen)) {
@@ -322,11 +339,14 @@ let setupStep = 0;
 function populateSetupModels(): void {
   const speech = $sel("setup_speech_model");
   const configuredSpeech = current.speech_model?.includes("/") ? "" : current.speech_model;
-  const previousSpeech = speech.value || configuredSpeech || "qwen2.5-3b-instruct-q4km";
+  const compatible = modelsCache.models.filter((m) => m.roles?.includes("cascade_llm") && (m.downloadable || m.installed));
+  const requested = speech.value || configuredSpeech;
+  const previousSpeech = compatible.find((m) => m.id === requested)?.id
+    || compatible.find((m) => m.badges?.includes("recommended"))?.id
+    || compatible[0]?.id || "";
   speech.innerHTML = "";
-  for (const m of modelsCache.models.filter((m) => m.roles?.includes("cascade_llm"))) {
-    const recommended = m.id === "qwen2.5-3b-instruct-q4km" ? " (Recommended)" : "";
-    option(speech, m.id, `${m.name}${recommended}${m.installed ? " — installed" : " — download required"}`);
+  for (const m of compatible) {
+    option(speech, m.id, `${modelLabel(m)}${m.installed ? " — installed" : " — download required"}`);
   }
   speech.value = previousSpeech;
 
@@ -334,12 +354,14 @@ function populateSetupModels(): void {
   const previousBrain = brain.value || current.brain_local_model || "";
   brain.innerHTML = "";
   for (const m of modelsCache.models.filter((m) => m.installed && m.roles?.includes("brain"))) {
-    option(brain, m.id, m.name);
+    option(brain, m.id, modelLabel(m));
   }
   if (!brain.options.length) option(brain, "", "No local model installed");
   brain.value = previousBrain || brain.options[0]?.value || "";
 
   const selected = modelsCache.models.find((m) => m.id === speech.value);
+  $("setup_model_badges").innerHTML = selected ? badges(selected) : "";
+  ($("setup_download_speech") as HTMLButtonElement).disabled = !selected?.downloadable || selected.installed || selected.downloading;
   if (selected?.installed) {
     $("setup_speech_status").textContent = `Installed (${fmtBytes(selected.bytes_on_disk)})`;
   } else if (selected?.downloading) {
@@ -528,22 +550,6 @@ $("setup_next").addEventListener("click", async () => {
     if (isWeb) location.replace("/");
   } catch (e) {
     setupError(errorText(e));
-  }
-});
-
-$("am_add").addEventListener("click", async () => {
-  const spec: ModelSpec = {
-    name: $in("am_name").value,
-    repo: $in("am_repo").value,
-    file: $in("am_file").value,
-    url: $in("am_url").value,
-  };
-  try {
-    await invoke("model_add", { spec });
-    $in("am_name").value = $in("am_repo").value = $in("am_file").value = $in("am_url").value = "";
-    void renderModels();
-  } catch (e) {
-    flash(`add failed: ${errorText(e)}`);
   }
 });
 

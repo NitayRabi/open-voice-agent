@@ -161,15 +161,6 @@ fn models_list(app: AppHandle, state: State<'_, AppState>) -> serde_json::Value 
 }
 
 #[tauri::command]
-fn model_add(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    spec: serde_json::Value,
-) -> Result<String, String> {
-    state.assets.add(&app, &spec)
-}
-
-#[tauri::command]
 fn model_download(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     state.assets.download(&app, &id)
 }
@@ -321,7 +312,6 @@ pub fn run() {
             web_stop,
             web_url,
             models_list,
-            model_add,
             model_download,
             model_cancel,
             model_remove,

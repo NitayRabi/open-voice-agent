@@ -107,7 +107,7 @@ fn d_health_url() -> String {
     format!("http://127.0.0.1:{BACKEND_PORT}/")
 }
 fn d_speech_model() -> String {
-    "qwen2.5-3b-instruct-q4km".into()
+    crate::assets::RECOMMENDED_MODEL_ID.into()
 }
 fn d_local() -> String {
     "local".into()

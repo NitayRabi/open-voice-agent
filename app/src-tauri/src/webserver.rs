@@ -539,11 +539,7 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
             req.respond(json_response(json!({ "path": path }), 200))
         }
         (Method::Post, "/api/models/add") => {
-            let body = read_body(&mut req);
-            match app.state::<AppState>().assets.add(app, &body) {
-                Ok(id) => req.respond(json_response(json!({ "id": id }), 200)),
-                Err(e) => req.respond(json_response(json!({ "error": e }), 400)),
-            }
+            req.respond(json_response(json!({ "error": "Custom downloads are no longer supported. Choose a catalog model or use an existing GGUF path." }), 410))
         }
         (Method::Post, p @ ("/api/models/download" | "/api/models/cancel" | "/api/models/remove"
             | "/api/models/forget")) => {
