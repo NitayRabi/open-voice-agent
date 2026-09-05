@@ -317,7 +317,11 @@ fn run_download(app: &AppHandle, entry: &ModelEntry, job: &Job, token: &str) -> 
     let mut have = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
 
     let url = entry.resolved_url();
-    let mut req = ureq::get(&url).timeout(Duration::from_secs(60));
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(20))
+        .timeout_read(Duration::from_secs(60))
+        .build();
+    let mut req = agent.get(&url);
     if have > 0 {
         req = req.set("Range", &format!("bytes={have}-"));
     }
