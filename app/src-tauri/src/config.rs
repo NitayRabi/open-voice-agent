@@ -59,6 +59,10 @@ fn d_brain_model() -> String {
     String::new()
 }
 fn d_llama_server_bin() -> String {
+    #[cfg(target_os = "macos")]
+    return "/opt/homebrew/bin/llama-server".into();
+
+    #[cfg(not(target_os = "macos"))]
     "llama-server".into()
 }
 fn d_brain_local_port() -> u16 {

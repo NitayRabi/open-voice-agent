@@ -22,10 +22,19 @@ fn looks_like_repo(p: &std::path::Path) -> bool {
 }
 
 fn has_speech_runtime(p: &std::path::Path) -> bool {
-    p.join(".tmp/speech-to-speech/.venv/bin/speech-to-speech")
+    let speech_cli = p.join(".tmp/speech-to-speech/.venv/bin/speech-to-speech");
+    if !speech_cli.is_file() {
+        return false;
+    }
+
+    // Apple Silicon uses the Python runtime's MLX Parakeet and Qwen3-TTS
+    // implementations. Linux keeps using the separate native HIP TTS server.
+    #[cfg(target_os = "macos")]
+    return true;
+
+    #[cfg(not(target_os = "macos"))]
+    p.join(".tmp/qwen3-tts-hip/target/release/tts-server")
         .is_file()
-        && p.join(".tmp/qwen3-tts-hip/target/release/tts-server")
-            .is_file()
 }
 
 fn main_worktree(p: &std::path::Path) -> Option<PathBuf> {
@@ -58,6 +67,24 @@ fn repo_root_guess() -> PathBuf {
             if !p.pop() {
                 break;
             }
+        }
+    }
+
+    // A locally built macOS .app may be opened from Finder after it has been
+    // copied out of target/, so neither its executable nor cwd points back to
+    // the source checkout that owns the separately installed voice runtime.
+    // Cargo embeds the manifest directory; use that location when it still
+    // exists (the normal build-from-source installation described in README).
+    let manifest_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .map(PathBuf::from);
+    if let Some(root) = manifest_root {
+        if looks_like_repo(&root) {
+            if has_speech_runtime(&root) {
+                return root;
+            }
+            fallbacks.push(root);
         }
     }
     fallbacks
@@ -94,13 +121,15 @@ impl BackendManager {
         } else {
             PathBuf::from(&cfg.launch_cwd)
         };
-        let is_bundled_voice_launcher = cfg.launch_command.get(0).map(String::as_str) == Some("bash")
+        let is_bundled_voice_launcher = cfg.launch_command.get(0).map(String::as_str)
+            == Some("bash")
             && cfg.launch_command.get(1).map(String::as_str) == Some("hf-s2s/run-comparison.sh");
         if is_bundled_voice_launcher && !has_speech_runtime(&cwd) {
-            return Err(
-                "the Parakeet/TTS runtime is not installed; install the required voice runtime before completing Setup"
-                    .into(),
-            );
+            #[cfg(target_os = "macos")]
+            return Err("the Apple Silicon Parakeet/TTS runtime is not installed; run `bash hf-s2s/setup-macos.sh` from the source checkout before completing Setup".into());
+
+            #[cfg(not(target_os = "macos"))]
+            return Err("the Parakeet/TTS runtime is not installed; install the required voice runtime before completing Setup".into());
         }
 
         let mut cmd = Command::new(program);

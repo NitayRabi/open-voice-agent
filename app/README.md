@@ -140,6 +140,9 @@ delegation at `http://127.0.0.1:<port>/v1`.
 
 - Rust ≥ 1.77, a C toolchain.
 - Node ≥ 20 + npm, to compile the TypeScript frontend.
+- **Apple Silicon macOS:** Xcode command-line tools, Homebrew, `uv`, and
+  llama.cpp: `xcode-select --install` then `brew install uv llama.cpp`. Intel
+  Macs are not supported by the managed MLX speech stack.
 - **Linux:** GTK 3, WebKitGTK 4.1, libsoup3 + `-devel`/`-dev` packages.
   Fedora: `sudo dnf install webkit2gtk4.1-devel gtk3-devel libsoup3-devel
   libappindicator-gtk3-devel librsvg2-devel libxdo-devel`.
@@ -174,6 +177,65 @@ cargo tauri build                    # .deb / .rpm / .AppImage
 # or just the binary:
 npm run build && cd src-tauri && cargo build --release && ./target/release/open-voice-agent
 ```
+
+### Apple Silicon macOS
+
+The macOS launcher keeps the same pipeline and model split as Linux, but uses
+the native backend for each component:
+
+| component | Apple Silicon backend |
+|---|---|
+| Parakeet TDT 0.6B STT | `mlx-audio` on MPS |
+| conversational GGUF (including Gemma 4 E4B) | llama.cpp on Metal |
+| Qwen3-TTS 0.6B | `mlx-audio`, 6-bit by default |
+
+Prepare the Python/MLX runtime once from the repository root, then build the
+ARM64 app:
+
+```bash
+xcode-select --install
+brew install uv llama.cpp
+bash hf-s2s/setup-macos.sh
+
+cd app
+npm ci
+rustup target add aarch64-apple-darwin
+cargo tauri build --target aarch64-apple-darwin
+```
+
+The app and DMG are written below
+`src-tauri/target/aarch64-apple-darwin/release/bundle/`. The build includes the
+macOS microphone permission description, so macOS can prompt on first use.
+
+Model weights and the Python runtime are deliberately not embedded in the app.
+Keep the source checkout (including `.tmp/speech-to-speech`) where it was built;
+a locally built app remembers that checkout even when opened from Finder. If
+the checkout is moved later, set `launch_cwd` in
+`~/Library/Application Support/ai.openvoice.agent/config.json` to its new
+absolute path. `launch_cwd` must be the repository root, not `app/`.
+
+The first engine start downloads the Parakeet and 6-bit Qwen3-TTS MLX weights,
+so it can take several minutes. Logs remain visible in Settings. To trade voice
+quality for lower memory use, put this in `launch_env` in the same config file:
+
+```json
+{
+  "HF_S2S_TTS_MLX_QUANTIZATION": "4bit"
+}
+```
+
+Homebrew installs `llama-server` at `/opt/homebrew/bin/llama-server`, which the
+launcher checks explicitly because Finder apps receive a minimal `PATH`. A
+custom build can be selected with `HF_S2S_LLM_BIN` in `launch_env`. The launcher
+refuses Intel macOS instead of failing later inside MLX.
+
+For the optional HTTPS/WSS LAN endpoint, also run `brew install socat` and
+configure a TLS certificate and key in the Web settings. It is not needed for
+the desktop app or a localhost browser.
+
+An unsigned local build may need to be opened once with Control-click → Open.
+Distributing it to other Macs still requires normal Apple code signing and
+notarization, and recipients need a separately prepared speech runtime.
 
 Frontend-only loops:
 

@@ -5,6 +5,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 UPSTREAM="$ROOT/.tmp/speech-to-speech"
 VENV="$UPSTREAM/.venv"
+PLATFORM="$(uname -s)"
+ARCH="$(uname -m)"
 SSL_DIR="${SSL_DIR:-$ROOT/personaplex/ssl}"
 # The desktop app overrides these with the exact cert and key it serves the
 # web UI with, so the page and the wss endpoint present one identity and a
@@ -18,8 +20,27 @@ WSS_PORT="${HF_S2S_WSS_PORT:-8765}"
 UI_PORT="${HF_S2S_UI_PORT:-9000}"
 LAN_UI_PORT="${HF_S2S_LAN_UI_PORT:-9001}"
 LLM_PORT="${HF_S2S_LLM_PORT:-8011}"
-LLM_BIN="${HF_S2S_LLM_BIN:-/home/nitayrabi/llama.cpp/build-hip/bin/llama-server}"
-LLM_MODEL="${HF_S2S_LLM_MODEL:-/home/nitayrabi/models/gemma-4-E4B_q4_0-it.gguf}"
+if [[ "$PLATFORM" == "Darwin" ]]; then
+  if [[ "$ARCH" != "arm64" ]]; then
+    echo "The managed macOS speech stack requires Apple Silicon (arm64); found ${ARCH}." >&2
+    exit 1
+  fi
+  # Finder-launched apps do not inherit the interactive shell's Homebrew PATH.
+  # Prefer the standard Apple Silicon Homebrew location, while preserving an
+  # explicit override and allowing other installations found on PATH.
+  if [[ -x /opt/homebrew/bin/llama-server ]]; then
+    default_llm_bin=/opt/homebrew/bin/llama-server
+  else
+    default_llm_bin="$(command -v llama-server || true)"
+    default_llm_bin="${default_llm_bin:-llama-server}"
+  fi
+  default_llm_model="${HOME}/models/gemma-4-E4B_q4_0-it.gguf"
+else
+  default_llm_bin=/home/nitayrabi/llama.cpp/build-hip/bin/llama-server
+  default_llm_model=/home/nitayrabi/models/gemma-4-E4B_q4_0-it.gguf
+fi
+LLM_BIN="${HF_S2S_LLM_BIN:-$default_llm_bin}"
+LLM_MODEL="${HF_S2S_LLM_MODEL:-$default_llm_model}"
 LLM_BASE_URL="${HF_S2S_LLM_BASE_URL:-}"
 LLM_NAME="${HF_S2S_LLM_NAME:-local-conversation}"
 LLM_API_KEY="${HF_S2S_LLM_API_KEY:-}"
@@ -41,7 +62,22 @@ trap cleanup EXIT INT TERM
 
 cd "$UPSTREAM"
 
+if [[ ! -x "$VENV/bin/speech-to-speech" ]]; then
+  echo "speech-to-speech runtime not found at ${VENV}." >&2
+  if [[ "$PLATFORM" == "Darwin" ]]; then
+    echo "Run: bash hf-s2s/setup-macos.sh" >&2
+  fi
+  exit 1
+fi
+
 if [[ -z "$LLM_BASE_URL" ]]; then
+  if ! command -v "$LLM_BIN" >/dev/null 2>&1 && [[ ! -x "$LLM_BIN" ]]; then
+    echo "llama-server not found at '${LLM_BIN}'." >&2
+    if [[ "$PLATFORM" == "Darwin" ]]; then
+      echo "Install it with 'brew install llama.cpp' or set HF_S2S_LLM_BIN." >&2
+    fi
+    exit 1
+  fi
   "$LLM_BIN" \
     --model "$LLM_MODEL" --alias "$LLM_NAME" \
     --host 127.0.0.1 --port "$LLM_PORT" --ctx-size 4096 --parallel 1 \
@@ -62,42 +98,66 @@ if [[ -z "$LLM_BASE_URL" ]]; then
   LLM_BASE_URL="http://127.0.0.1:${LLM_PORT}/v1"
 fi
 
-LD_LIBRARY_PATH="/lib64:${LD_LIBRARY_PATH:-}" \
-  "$TTS_HIP_BIN" "$TTS_HIP_MODEL_DIR" "127.0.0.1:${TTS_HIP_PORT}" 240 &
-tts_hip_pid="$!"
-children+=("$tts_hip_pid")
+if [[ "$PLATFORM" == "Darwin" ]]; then
+  # The upstream macOS preset selects MLX/MPS for Parakeet and Qwen3-TTS.
+  # Keep the conversational model on llama.cpp so the app can continue to use
+  # its downloaded GGUF catalog and tool-capable Chat Completions adapter.
+  "$VENV/bin/speech-to-speech" serve \
+    --mac-optimal-settings \
+    --host 127.0.0.1 --port "$BACKEND_PORT" \
+    --stt parakeet-tdt \
+    --parakeet_tdt_device mps \
+    --parakeet_tdt_compute_type float16 \
+    --llm_backend chat-completions \
+    --model_name "$LLM_NAME" \
+    --responses_api_base_url "$LLM_BASE_URL" \
+    --responses_api_api_key "$LLM_API_KEY" \
+    --tts qwen3 \
+    --qwen3_tts_model_name "$TTS_MODEL" \
+    --qwen3_tts_device mps \
+    --qwen3_tts_mlx_quantization "${HF_S2S_TTS_MLX_QUANTIZATION:-6bit}" \
+    --qwen3_tts_speaker Aiden \
+    --qwen3_tts_language auto \
+    --stream_batch_sentences 1 \
+    --init_chat_prompt "You are a natural, concise voice assistant. Speak conversationally. Use an available tool whenever it is needed, then briefly tell the user the result." &
+else
+  LD_LIBRARY_PATH="/lib64:${LD_LIBRARY_PATH:-}" \
+    "$TTS_HIP_BIN" "$TTS_HIP_MODEL_DIR" "127.0.0.1:${TTS_HIP_PORT}" 240 &
+  tts_hip_pid="$!"
+  children+=("$tts_hip_pid")
 
-for _ in $(seq 1 120); do
-  if curl -fsS "http://127.0.0.1:${TTS_HIP_PORT}/health" >/dev/null 2>&1; then
-    break
-  fi
-  if ! kill -0 "$tts_hip_pid" 2>/dev/null; then
-    echo "Native HIP Qwen3-TTS exited during startup" >&2
-    exit 1
-  fi
-  sleep 0.5
-done
+  for _ in $(seq 1 120); do
+    if curl -fsS "http://127.0.0.1:${TTS_HIP_PORT}/health" >/dev/null 2>&1; then
+      break
+    fi
+    if ! kill -0 "$tts_hip_pid" 2>/dev/null; then
+      echo "Native HIP Qwen3-TTS exited during startup" >&2
+      exit 1
+    fi
+    sleep 0.5
+  done
 
-QWEN3_TTS_HIP_URL="http://127.0.0.1:${TTS_HIP_PORT}" "$VENV/bin/speech-to-speech" serve \
-  --host 127.0.0.1 --port "$BACKEND_PORT" \
-  --stt parakeet-tdt \
-  --parakeet_tdt_device cuda \
-  --parakeet_tdt_compute_type float16 \
-  --llm_backend chat-completions \
-  --model_name "$LLM_NAME" \
-  --responses_api_base_url "$LLM_BASE_URL" \
-  --responses_api_api_key "$LLM_API_KEY" \
-  --tts qwen3 \
-  --qwen3_tts_model_name "$TTS_MODEL" \
-  --qwen3_tts_backend hip-http \
-  --qwen3_tts_device cuda \
-  --qwen3_tts_dtype bfloat16 \
-  --qwen3_tts_attn_implementation eager \
-  --qwen3_tts_speaker Aiden \
-  --qwen3_tts_language auto \
-  --qwen3_tts_parity_mode True \
-  --stream_batch_sentences 1 \
-  --init_chat_prompt "You are a natural, concise voice assistant. Speak conversationally. Use an available tool whenever it is needed, then briefly tell the user the result." &
+  QWEN3_TTS_HIP_URL="http://127.0.0.1:${TTS_HIP_PORT}" "$VENV/bin/speech-to-speech" serve \
+    --host 127.0.0.1 --port "$BACKEND_PORT" \
+    --stt parakeet-tdt \
+    --parakeet_tdt_device cuda \
+    --parakeet_tdt_compute_type float16 \
+    --llm_backend chat-completions \
+    --model_name "$LLM_NAME" \
+    --responses_api_base_url "$LLM_BASE_URL" \
+    --responses_api_api_key "$LLM_API_KEY" \
+    --tts qwen3 \
+    --qwen3_tts_model_name "$TTS_MODEL" \
+    --qwen3_tts_backend hip-http \
+    --qwen3_tts_device cuda \
+    --qwen3_tts_dtype bfloat16 \
+    --qwen3_tts_attn_implementation eager \
+    --qwen3_tts_speaker Aiden \
+    --qwen3_tts_language auto \
+    --qwen3_tts_parity_mode True \
+    --stream_batch_sentences 1 \
+    --init_chat_prompt "You are a natural, concise voice assistant. Speak conversationally. Use an available tool whenever it is needed, then briefly tell the user the result." &
+fi
 backend_pid="$!"
 children+=("$backend_pid")
 
@@ -156,4 +216,18 @@ if [[ -r "$SSL_CERT" && -r "$SSL_KEY" ]]; then
 
   echo "HF cascaded voice comparison (LAN) -> https://${LAN_IP}:${LAN_UI_PORT}/"
 fi
-wait -n "${children[@]}"
+if [[ "$PLATFORM" == "Darwin" ]]; then
+  # macOS still ships Bash 3.2, which predates `wait -n`. Poll all children so
+  # the supervisor retains the Linux behavior of stopping if any service exits.
+  while true; do
+    for pid in "${children[@]}"; do
+      if ! kill -0 "$pid" 2>/dev/null; then
+        wait "$pid"
+        exit $?
+      fi
+    done
+    sleep 1
+  done
+else
+  wait -n "${children[@]}"
+fi
