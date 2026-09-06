@@ -93,7 +93,16 @@ impl LocalBrain {
                 "no local brain model — download or add one in the Models tab".to_string()
             })?;
 
-        let mut cmd = Command::new(&cfg.llama_server_bin);
+        // Empty means "auto-managed": reuse an existing install (Homebrew,
+        // PATH) or download a pinned build, rather than requiring the user
+        // to install llama.cpp and type its path in themselves.
+        let bin = if cfg.llama_server_bin.trim().is_empty() {
+            crate::runtime::ensure_llama_server(app)?
+        } else {
+            std::path::PathBuf::from(&cfg.llama_server_bin)
+        };
+
+        let mut cmd = Command::new(&bin);
         cmd.args([
             "-m",
             &model.to_string_lossy(),
@@ -112,7 +121,7 @@ impl LocalBrain {
         .stderr(Stdio::piped());
 
         let mut child = cmd.spawn().map_err(|e| {
-            format!("could not start {}: {e}", cfg.llama_server_bin)
+            format!("could not start {}: {e}", bin.display())
         })?;
 
         let pipes = [child.stdout.take().map(as_read), child.stderr.take().map(as_read)];

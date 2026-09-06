@@ -114,7 +114,8 @@ endpoint. Same pattern as the whisper.cpp desktop apps.
 | **brain** LLM | ❌ | *Delegation → remote endpoint* (OpenAI / HF / your server), **or** *local* — download a GGUF from the **Models** tab and the app runs `llama-server` on it |
 | speech STT + TTS (HF cascade) | ❌ | `speech-to-speech serve` auto-fetches them into the HF cache on first run |
 | conversational LLM | ❌ | choose a catalog GGUF in first-run setup / *Models*, use an existing GGUF under **Advanced**, or configure a remote OpenAI-compatible endpoint |
-| `llama-server` / `speech-to-speech` runtimes | ❌ | you install them; the app calls the binary/URL you point it at |
+| `llama-server` runtime | ❌ | reuses an existing Homebrew/PATH install, else downloaded and managed automatically (Apple Silicon macOS) |
+| `speech-to-speech` Python/MLX runtime | ❌ | installed automatically on first use (Apple Silicon macOS): `uv`, the pinned checkout, and its Python env, no terminal required |
 
 ### Models tab
 
@@ -135,17 +136,21 @@ endpoint. Same pattern as the whisper.cpp desktop apps.
 *Remote* (default): any `/chat/completions` — `https://api.openai.com/v1` +
 `gpt-4o-mini` + key, an HF Inference endpoint, or your own vLLM / llama-server.
 
-*Local*: pick a downloaded model, set `llama-server` binary (not bundled —
-install llama.cpp) + port/context/GPU-layers. The app starts/stops it and points
-delegation at `http://127.0.0.1:<port>/v1`.
+*Local*: pick a downloaded model + port/context/GPU-layers. The app starts/stops
+`llama-server` and points delegation at `http://127.0.0.1:<port>/v1`. Leave the
+**llama-server binary** field blank (the default) to have the app reuse an
+existing install or download one automatically; set it only to point at your
+own build.
 
 ## Prerequisites
 
 - Rust ≥ 1.77, a C toolchain.
 - Node ≥ 20 + npm, to compile the TypeScript frontend.
-- **Apple Silicon macOS:** Xcode command-line tools, Homebrew, `uv`, and
-  llama.cpp: `xcode-select --install` then `brew install uv llama.cpp`. Intel
-  Macs are not supported by the managed MLX speech stack.
+- **Apple Silicon macOS:** Xcode command-line tools (`xcode-select --install`),
+  to *build* the app. `uv` and `llama.cpp` are not required — the running app
+  downloads and manages both itself the first time it needs them (see
+  [Apple Silicon macOS](#apple-silicon-macos)). Intel Macs are not supported by
+  the managed MLX speech stack.
 - **Linux:** GTK 3, WebKitGTK 4.1, libsoup3 + `-devel`/`-dev` packages.
   Fedora: `sudo dnf install webkit2gtk4.1-devel gtk3-devel libsoup3-devel
   libappindicator-gtk3-devel librsvg2-devel libxdo-devel`.
@@ -192,13 +197,10 @@ the native backend for each component:
 | conversational GGUF (including Gemma 4 E4B) | llama.cpp on Metal |
 | Qwen3-TTS 0.6B | `mlx-audio`, 6-bit by default |
 
-Prepare the Python/MLX runtime once from the repository root, then build the
-ARM64 app:
+Build the ARM64 app:
 
 ```bash
 xcode-select --install
-brew install uv llama.cpp
-bash hf-s2s/setup-macos.sh
 
 cd app
 npm ci
@@ -210,16 +212,26 @@ The app and DMG are written below
 `src-tauri/target/aarch64-apple-darwin/release/bundle/`. The build includes the
 macOS microphone permission description, so macOS can prompt on first use.
 
-Model weights and the Python runtime are deliberately not embedded in the app.
+Nothing Python/MLX-related needs to be prepared before building. The first time
+the voice engine is started (from first-run Setup, or `manage_backend`), the
+app installs whatever it's missing on its own, with progress in Settings → Log:
+a standalone `uv` (which fetches its own Python 3.12 — no system Python
+needed), the pinned `speech-to-speech` checkout under `.tmp/`, its Python env
+via `uv sync`, and — unless an existing `llama-server` is found on Homebrew's
+path or `PATH` — a prebuilt `llama-server` binary. `hf-s2s/setup-macos.sh` still
+works if you'd rather run that step yourself from a terminal first, but it's no
+longer required.
+
 Keep the source checkout (including `.tmp/speech-to-speech`) where it was built;
 a locally built app remembers that checkout even when opened from Finder. If
 the checkout is moved later, set `launch_cwd` in
 `~/Library/Application Support/ai.openvoice.agent/config.json` to its new
 absolute path. `launch_cwd` must be the repository root, not `app/`.
 
-The first engine start downloads the Parakeet and 6-bit Qwen3-TTS MLX weights,
-so it can take several minutes. Logs remain visible in Settings. To trade voice
-quality for lower memory use, put this in `launch_env` in the same config file:
+The first engine start also downloads the Parakeet and 6-bit Qwen3-TTS MLX
+weights, so altogether it can take several minutes the first time. To trade
+voice quality for lower memory use, put this in `launch_env` in the same config
+file:
 
 ```json
 {
@@ -227,18 +239,19 @@ quality for lower memory use, put this in `launch_env` in the same config file:
 }
 ```
 
-Homebrew installs `llama-server` at `/opt/homebrew/bin/llama-server`, which the
-launcher checks explicitly because Finder apps receive a minimal `PATH`. A
-custom build can be selected with `HF_S2S_LLM_BIN` in `launch_env`. The launcher
-refuses Intel macOS instead of failing later inside MLX.
+Both `llama_server_bin` (Settings) and `HF_S2S_LLM_BIN` (`launch_env`) can be
+set to point at your own `llama-server` build instead of the managed one; leave
+them blank (the default) for automatic resolution. The launcher refuses Intel
+macOS instead of failing later inside MLX.
 
-For the optional HTTPS/WSS LAN endpoint, also run `brew install socat` and
-configure a TLS certificate and key in the Web settings. It is not needed for
-the desktop app or a localhost browser.
+For the optional HTTPS/WSS LAN endpoint, run `brew install socat` and configure
+a TLS certificate and key in the Web settings. It is not needed for the desktop
+app or a localhost browser.
 
 An unsigned local build may need to be opened once with Control-click → Open.
 Distributing it to other Macs still requires normal Apple code signing and
-notarization, and recipients need a separately prepared speech runtime.
+notarization; recipients need Apple Silicon macOS, but no separately prepared
+speech runtime — the app installs it on first use.
 
 Frontend-only loops:
 

@@ -59,8 +59,12 @@ fn d_brain_model() -> String {
     String::new()
 }
 fn d_llama_server_bin() -> String {
+    // Empty = auto-managed: reuse an existing install (Homebrew, PATH) if
+    // there is one, otherwise download a pinned build automatically. Non-mac
+    // keeps the old PATH-lookup default since that auto-download isn't
+    // implemented there.
     #[cfg(target_os = "macos")]
-    return "/opt/homebrew/bin/llama-server".into();
+    return String::new();
 
     #[cfg(not(target_os = "macos"))]
     "llama-server".into()

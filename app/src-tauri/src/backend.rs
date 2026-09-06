@@ -5,36 +5,24 @@
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::config::Settings;
+use crate::runtime::has_speech_runtime;
 use crate::AppState;
 
 #[derive(Default)]
 pub struct BackendManager {
     child: Mutex<Option<Child>>,
+    /// guards against two overlapping automatic runtime installs
+    installing: AtomicBool,
 }
 
 fn looks_like_repo(p: &std::path::Path) -> bool {
     p.join("hf-s2s").is_dir() || p.join("run.sh").is_file()
-}
-
-fn has_speech_runtime(p: &std::path::Path) -> bool {
-    let speech_cli = p.join(".tmp/speech-to-speech/.venv/bin/speech-to-speech");
-    if !speech_cli.is_file() {
-        return false;
-    }
-
-    // Apple Silicon uses the Python runtime's MLX Parakeet and Qwen3-TTS
-    // implementations. Linux keeps using the separate native HIP TTS server.
-    #[cfg(target_os = "macos")]
-    return true;
-
-    #[cfg(not(target_os = "macos"))]
-    p.join(".tmp/qwen3-tts-hip/target/release/tts-server")
-        .is_file()
 }
 
 fn main_worktree(p: &std::path::Path) -> Option<PathBuf> {
@@ -113,9 +101,9 @@ impl BackendManager {
         if self.is_running() {
             return Err("backend already running".into());
         }
-        let mut parts = cfg.launch_command.iter();
-        let program = parts.next().ok_or("launch_command is empty")?;
-
+        if cfg.launch_command.is_empty() {
+            return Err("launch_command is empty".into());
+        }
         let cwd = if cfg.launch_cwd.trim().is_empty() {
             repo_root_guess()
         } else {
@@ -124,13 +112,95 @@ impl BackendManager {
         let is_bundled_voice_launcher = cfg.launch_command.get(0).map(String::as_str)
             == Some("bash")
             && cfg.launch_command.get(1).map(String::as_str) == Some("hf-s2s/run-comparison.sh");
-        if is_bundled_voice_launcher && !has_speech_runtime(&cwd) {
-            #[cfg(target_os = "macos")]
-            return Err("the Apple Silicon Parakeet/TTS runtime is not installed; run `bash hf-s2s/setup-macos.sh` from the source checkout before completing Setup".into());
 
-            #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "macos")]
+        if is_bundled_voice_launcher {
+            self.start_with_auto_install(app, cfg, cwd);
+            return Ok(());
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        if is_bundled_voice_launcher && !has_speech_runtime(&cwd) {
             return Err("the Parakeet/TTS runtime is not installed; install the required voice runtime before completing Setup".into());
         }
+
+        self.spawn_process(app, cfg)
+    }
+
+    /// Make sure `llama-server` and (if needed) the Python speech runtime are
+    /// installed before spawning, doing the installation lazily in the
+    /// background so the caller never has to run anything by hand. A no-op
+    /// beyond a couple of cheap checks once everything is already in place.
+    #[cfg(target_os = "macos")]
+    fn start_with_auto_install(&self, app: &AppHandle, cfg: &Settings, cwd: PathBuf) {
+        if self
+            .installing
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            let _ = app.emit(
+                "backend-log",
+                "[app] voice runtime setup already in progress…".to_string(),
+            );
+            return;
+        }
+        let app = app.clone();
+        let cfg = cfg.clone();
+        std::thread::spawn(move || {
+            let outcome = (|| -> Result<Settings, String> {
+                let mut cfg = cfg;
+                if cfg.speech_model_source != "remote" {
+                    let llama_bin = crate::runtime::ensure_llama_server(&app)?;
+                    cfg.launch_env
+                        .entry("HF_S2S_LLM_BIN".into())
+                        .or_insert_with(|| llama_bin.display().to_string());
+                }
+                if !has_speech_runtime(&cwd) {
+                    let _ = app.emit(
+                        "backend-log",
+                        "[app] voice runtime not installed yet; installing it automatically \
+                         (first time only, can take several minutes)…"
+                            .to_string(),
+                    );
+                    crate::runtime::ensure_speech_runtime(&app, &cwd)?;
+                }
+                Ok(cfg)
+            })();
+
+            let state = app.state::<AppState>();
+            state.backend.installing.store(false, Ordering::SeqCst);
+            match outcome {
+                Ok(cfg) => {
+                    if !state.backend.is_running() {
+                        if let Err(e) = state.backend.spawn_process(&app, &cfg) {
+                            let _ = app.emit(
+                                "backend-log",
+                                format!("[app] voice engine failed to start: {e}"),
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = app.emit(
+                        "backend-log",
+                        format!("[app] automatic runtime setup failed: {e}"),
+                    );
+                }
+            }
+        });
+    }
+
+    fn spawn_process(&self, app: &AppHandle, cfg: &Settings) -> Result<(), String> {
+        if self.is_running() {
+            return Err("backend already running".into());
+        }
+        let mut parts = cfg.launch_command.iter();
+        let program = parts.next().ok_or("launch_command is empty")?;
+        let cwd = if cfg.launch_cwd.trim().is_empty() {
+            repo_root_guess()
+        } else {
+            PathBuf::from(&cfg.launch_cwd)
+        };
 
         let mut cmd = Command::new(program);
         cmd.args(parts)

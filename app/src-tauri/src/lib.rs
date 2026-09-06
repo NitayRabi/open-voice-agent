@@ -4,6 +4,7 @@ mod brain;
 mod config;
 mod hotkey;
 mod localbrain;
+mod runtime;
 mod webserver;
 
 use parking_lot::Mutex;

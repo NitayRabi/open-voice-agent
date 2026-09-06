@@ -79,8 +79,8 @@
             <label><span>Downloaded model</span><select id="setup_brain_model"></select></label>
             <div class="setup-divider"><span>or</span></div>
             <label><span>Use an existing GGUF on this machine</span><input id="setup_brain_path" type="text" spellcheck="false" placeholder="/absolute/path/to/model.gguf" /></label>
-            <label><span>llama-server executable</span><input id="setup_llama_server" type="text" spellcheck="false" placeholder="llama-server or /absolute/path/to/llama-server" /></label>
-            <p class="muted">You can use the same GGUF for conversation and delegation, or install another model from the Models tab.</p>
+            <label><span>llama-server executable (optional)</span><input id="setup_llama_server" type="text" spellcheck="false" placeholder="auto — installed automatically" /></label>
+            <p class="muted">You can use the same GGUF for conversation and delegation, or install another model from the Models tab. Leave the executable field blank to have the app install and manage llama.cpp for you.</p>
           </div>
         </section>
 
@@ -230,9 +230,9 @@
             <small>Downloaded models from the <b>Models</b> tab, or paste an absolute <code>.gguf</code> path.</small>
           </label>
           <label>
-            <span>llama-server binary</span>
-            <input id="llama_server_bin" type="text" spellcheck="false" placeholder="llama-server" />
-            <small>Not bundled. Install llama.cpp or point this at your build.</small>
+            <span>llama-server binary (optional)</span>
+            <input id="llama_server_bin" type="text" spellcheck="false" placeholder="auto — installed automatically" />
+            <small>Downloaded and managed automatically the first time it's needed. Leave blank unless you want to point at your own build.</small>
           </label>
           <div class="field-row">
             <label class="field"><span>Port</span><input id="brain_local_port" type="number" min="1" max="65535" /></label>

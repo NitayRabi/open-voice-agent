@@ -17,9 +17,10 @@ GGUF models on demand (whisper.cpp-app style) or uses a remote endpoint. See
 [`app/README.md`](app/README.md) to build and run it.
 
 Apple Silicon Macs are supported by the managed cascade: Parakeet and Qwen3-TTS
-use MLX/MPS, while the conversational GGUF runs in llama.cpp on Metal. Run
-`bash hf-s2s/setup-macos.sh` before building the ARM64 Tauri app; the complete
-macOS setup and build instructions are in [`app/README.md`](app/README.md#apple-silicon-macos).
+use MLX/MPS, while the conversational GGUF runs in llama.cpp on Metal. The
+running app installs its own Python/MLX runtime and `llama-server` on first use
+— no manual setup step before building; the complete macOS setup and build
+instructions are in [`app/README.md`](app/README.md#apple-silicon-macos).
 
     ./run.sh                         # Q4_0, https://192.168.68.46:8999
     ./run.sh --quant Q8_0            # Q8_0

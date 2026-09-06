@@ -429,7 +429,7 @@ function initSetupForm(): void {
   $in("setup_brain_name").value = current.brain_model || "";
   $in("setup_brain_key").value = current.brain_api_key || "";
   $in("setup_brain_path").value = current.brain_local_model?.includes("/") ? current.brain_local_model : "";
-  $in("setup_llama_server").value = current.llama_server_bin || "llama-server";
+  $in("setup_llama_server").value = current.llama_server_bin || "";
   syncSetupBrain();
   syncSetupSpeech();
   populateSetupModels();
@@ -457,7 +457,6 @@ async function validateSetupStep(): Promise<void> {
       if (!id || !(await invoke("model_resolve", { idOrPath: id }))) {
         throw new Error("Install and choose a local model for delegation.");
       }
-      if (!$in("setup_llama_server").value.trim()) throw new Error("Enter the llama-server executable path.");
     }
   }
 }
