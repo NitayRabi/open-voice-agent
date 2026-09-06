@@ -1,0 +1,510 @@
+[
+  {
+    "repeat": 0,
+    "kind": "conversation",
+    "prompt": "I had a long day. Suggest one simple way to unwind.",
+    "first_delta_s": 0.04944458400041185,
+    "complete_s": 0.10253143099998852,
+    "usage": {
+      "completion_tokens": 24,
+      "prompt_tokens": 131,
+      "total_tokens": 155,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 131,
+      "prompt_ms": 27.39,
+      "prompt_per_token_ms": 0.20908396946564886,
+      "prompt_per_second": 4782.767433369843,
+      "predicted_n": 24,
+      "predicted_ms": 69.791,
+      "predicted_per_token_ms": 3.034391304347826,
+      "predicted_per_second": 329.5553867977246
+    },
+    "text": "",
+    "tool_calls": [
+      {
+        "name": "delegate_task",
+        "arguments": "{\"request\":\"suggest a simple way to unwind after a long day\"}"
+      }
+    ]
+  },
+  {
+    "repeat": 0,
+    "kind": "delegation",
+    "prompt": "Find the latest release of the Rust programming language and summarize what changed.",
+    "first_delta_s": 0.04446886200003064,
+    "complete_s": 0.09845645099994726,
+    "usage": {
+      "completion_tokens": 25,
+      "prompt_tokens": 130,
+      "total_tokens": 155,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 130,
+      "prompt_ms": 24.711,
+      "prompt_per_token_ms": 0.19008461538461538,
+      "prompt_per_second": 5260.815021650277,
+      "predicted_n": 25,
+      "predicted_ms": 71.011,
+      "predicted_per_token_ms": 2.9587916666666665,
+      "predicted_per_second": 337.97580656518005
+    },
+    "text": "",
+    "tool_calls": [
+      {
+        "name": "delegate_task",
+        "arguments": "{\"request\":\"Find the latest release of the Rust programming language and summarize what changed.\"}"
+      }
+    ]
+  },
+  {
+    "repeat": 0,
+    "kind": "conversation",
+    "prompt": "Explain why the sky is blue in one short sentence.",
+    "first_delta_s": 0.026842312000553648,
+    "complete_s": 0.09360619299968675,
+    "usage": {
+      "completion_tokens": 25,
+      "prompt_tokens": 128,
+      "total_tokens": 153,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 128,
+      "prompt_ms": 24.333,
+      "prompt_per_token_ms": 0.1901015625,
+      "prompt_per_second": 5260.346032137427,
+      "predicted_n": 25,
+      "predicted_ms": 66.685,
+      "predicted_per_token_ms": 2.778541666666667,
+      "predicted_per_second": 359.90102721751515
+    },
+    "text": "The sky appears blue because sunlight scatters more in the atmosphere when it hits blue wavelengths, thanks to Rayleigh scattering.",
+    "tool_calls": []
+  },
+  {
+    "repeat": 0,
+    "kind": "delegation",
+    "prompt": "Compare the files in my project and identify the biggest performance bottleneck.",
+    "first_delta_s": 0.04435698300039803,
+    "complete_s": 0.10073468600057822,
+    "usage": {
+      "completion_tokens": 26,
+      "prompt_tokens": 131,
+      "total_tokens": 157,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 131,
+      "prompt_ms": 24.307,
+      "prompt_per_token_ms": 0.18554961832061068,
+      "prompt_per_second": 5389.394001727897,
+      "predicted_n": 26,
+      "predicted_ms": 73.616,
+      "predicted_per_token_ms": 2.94464,
+      "predicted_per_second": 339.6000869376222
+    },
+    "text": "",
+    "tool_calls": [
+      {
+        "name": "delegate_task",
+        "arguments": "{\"request\":\"Compare the files in my project and identify the biggest performance bottleneck.\"}"
+      }
+    ]
+  },
+  {
+    "repeat": 1,
+    "kind": "conversation",
+    "prompt": "I had a long day. Suggest one simple way to unwind.",
+    "first_delta_s": 0.043956034000075306,
+    "complete_s": 0.09501030499995977,
+    "usage": {
+      "completion_tokens": 24,
+      "prompt_tokens": 131,
+      "total_tokens": 155,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 131,
+      "prompt_ms": 24.348,
+      "prompt_per_token_ms": 0.18586259541984732,
+      "prompt_per_second": 5380.318712009201,
+      "predicted_n": 24,
+      "predicted_ms": 67.788,
+      "predicted_per_token_ms": 2.947304347826087,
+      "predicted_per_second": 339.29309022245826
+    },
+    "text": "",
+    "tool_calls": [
+      {
+        "name": "delegate_task",
+        "arguments": "{\"request\":\"suggest a simple way to unwind after a long day\"}"
+      }
+    ]
+  },
+  {
+    "repeat": 1,
+    "kind": "delegation",
+    "prompt": "Find the latest release of the Rust programming language and summarize what changed.",
+    "first_delta_s": 0.04419212500033609,
+    "complete_s": 0.09746502899997722,
+    "usage": {
+      "completion_tokens": 25,
+      "prompt_tokens": 130,
+      "total_tokens": 155,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 130,
+      "prompt_ms": 24.52,
+      "prompt_per_token_ms": 0.1886153846153846,
+      "prompt_per_second": 5301.79445350734,
+      "predicted_n": 25,
+      "predicted_ms": 70.172,
+      "predicted_per_token_ms": 2.923833333333333,
+      "predicted_per_second": 342.01675882118224
+    },
+    "text": "",
+    "tool_calls": [
+      {
+        "name": "delegate_task",
+        "arguments": "{\"request\":\"Find the latest release of the Rust programming language and summarize what changed.\"}"
+      }
+    ]
+  },
+  {
+    "repeat": 1,
+    "kind": "conversation",
+    "prompt": "Explain why the sky is blue in one short sentence.",
+    "first_delta_s": 0.02735106199997972,
+    "complete_s": 0.0934109179997904,
+    "usage": {
+      "completion_tokens": 25,
+      "prompt_tokens": 128,
+      "total_tokens": 153,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 128,
+      "prompt_ms": 24.508,
+      "prompt_per_token_ms": 0.19146875,
+      "prompt_per_second": 5222.7843969316145,
+      "predicted_n": 25,
+      "predicted_ms": 66.038,
+      "predicted_per_token_ms": 2.751583333333333,
+      "predicted_per_second": 363.42711772010057
+    },
+    "text": "The sky appears blue because sunlight scatters more in the atmosphere when it hits blue wavelengths, thanks to Rayleigh scattering.",
+    "tool_calls": []
+  },
+  {
+    "repeat": 1,
+    "kind": "delegation",
+    "prompt": "Compare the files in my project and identify the biggest performance bottleneck.",
+    "first_delta_s": 0.04409541499990155,
+    "complete_s": 0.10012050900058966,
+    "usage": {
+      "completion_tokens": 26,
+      "prompt_tokens": 131,
+      "total_tokens": 157,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 131,
+      "prompt_ms": 24.484,
+      "prompt_per_token_ms": 0.18690076335877864,
+      "prompt_per_second": 5350.4329357948045,
+      "predicted_n": 26,
+      "predicted_ms": 72.937,
+      "predicted_per_token_ms": 2.91748,
+      "predicted_per_second": 342.76156134746424
+    },
+    "text": "",
+    "tool_calls": [
+      {
+        "name": "delegate_task",
+        "arguments": "{\"request\":\"Compare the files in my project and identify the biggest performance bottleneck.\"}"
+      }
+    ]
+  },
+  {
+    "repeat": 2,
+    "kind": "conversation",
+    "prompt": "I had a long day. Suggest one simple way to unwind.",
+    "first_delta_s": 0.04361779300052149,
+    "complete_s": 0.09409066800071741,
+    "usage": {
+      "completion_tokens": 24,
+      "prompt_tokens": 131,
+      "total_tokens": 155,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 131,
+      "prompt_ms": 24.24,
+      "prompt_per_token_ms": 0.1850381679389313,
+      "prompt_per_second": 5404.290429042904,
+      "predicted_n": 24,
+      "predicted_ms": 67.081,
+      "predicted_per_token_ms": 2.9165652173913044,
+      "predicted_per_second": 342.8690687377946
+    },
+    "text": "",
+    "tool_calls": [
+      {
+        "name": "delegate_task",
+        "arguments": "{\"request\":\"suggest a simple way to unwind after a long day\"}"
+      }
+    ]
+  },
+  {
+    "repeat": 2,
+    "kind": "delegation",
+    "prompt": "Find the latest release of the Rust programming language and summarize what changed.",
+    "first_delta_s": 0.04338269300023967,
+    "complete_s": 0.09658807100004196,
+    "usage": {
+      "completion_tokens": 25,
+      "prompt_tokens": 130,
+      "total_tokens": 155,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 130,
+      "prompt_ms": 24.086,
+      "prompt_per_token_ms": 0.18527692307692306,
+      "prompt_per_second": 5397.326247612722,
+      "predicted_n": 25,
+      "predicted_ms": 69.772,
+      "predicted_per_token_ms": 2.907166666666667,
+      "predicted_per_second": 343.97752680158226
+    },
+    "text": "",
+    "tool_calls": [
+      {
+        "name": "delegate_task",
+        "arguments": "{\"request\":\"Find the latest release of the Rust programming language and summarize what changed.\"}"
+      }
+    ]
+  },
+  {
+    "repeat": 2,
+    "kind": "conversation",
+    "prompt": "Explain why the sky is blue in one short sentence.",
+    "first_delta_s": 0.026983296000253176,
+    "complete_s": 0.09319833100016695,
+    "usage": {
+      "completion_tokens": 25,
+      "prompt_tokens": 128,
+      "total_tokens": 153,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 128,
+      "prompt_ms": 24.295,
+      "prompt_per_token_ms": 0.1898046875,
+      "prompt_per_second": 5268.573780613295,
+      "predicted_n": 25,
+      "predicted_ms": 66.248,
+      "predicted_per_token_ms": 2.7603333333333335,
+      "predicted_per_second": 362.2750875498128
+    },
+    "text": "The sky appears blue because sunlight scatters more in the atmosphere when it hits blue wavelengths, thanks to Rayleigh scattering.",
+    "tool_calls": []
+  },
+  {
+    "repeat": 2,
+    "kind": "delegation",
+    "prompt": "Compare the files in my project and identify the biggest performance bottleneck.",
+    "first_delta_s": 0.043629984999824956,
+    "complete_s": 0.09969489400009479,
+    "usage": {
+      "completion_tokens": 26,
+      "prompt_tokens": 131,
+      "total_tokens": 157,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 131,
+      "prompt_ms": 24.197,
+      "prompt_per_token_ms": 0.18470992366412214,
+      "prompt_per_second": 5413.8942844154235,
+      "predicted_n": 26,
+      "predicted_ms": 72.742,
+      "predicted_per_token_ms": 2.9096800000000003,
+      "predicted_per_second": 343.6804047180446
+    },
+    "text": "",
+    "tool_calls": [
+      {
+        "name": "delegate_task",
+        "arguments": "{\"request\":\"Compare the files in my project and identify the biggest performance bottleneck.\"}"
+      }
+    ]
+  },
+  {
+    "repeat": 3,
+    "kind": "conversation",
+    "prompt": "I had a long day. Suggest one simple way to unwind.",
+    "first_delta_s": 0.04372396100006881,
+    "complete_s": 0.09427647499978775,
+    "usage": {
+      "completion_tokens": 24,
+      "prompt_tokens": 131,
+      "total_tokens": 155,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 131,
+      "prompt_ms": 24.31,
+      "prompt_per_token_ms": 0.18557251908396946,
+      "prompt_per_second": 5388.728918140683,
+      "predicted_n": 24,
+      "predicted_ms": 67.076,
+      "predicted_per_token_ms": 2.916347826086956,
+      "predicted_per_second": 342.8946269902797
+    },
+    "text": "",
+    "tool_calls": [
+      {
+        "name": "delegate_task",
+        "arguments": "{\"request\":\"suggest a simple way to unwind after a long day\"}"
+      }
+    ]
+  },
+  {
+    "repeat": 3,
+    "kind": "delegation",
+    "prompt": "Find the latest release of the Rust programming language and summarize what changed.",
+    "first_delta_s": 0.04378905199973815,
+    "complete_s": 0.09727022499919258,
+    "usage": {
+      "completion_tokens": 25,
+      "prompt_tokens": 130,
+      "total_tokens": 155,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 130,
+      "prompt_ms": 24.317,
+      "prompt_per_token_ms": 0.18705384615384615,
+      "prompt_per_second": 5346.054200764897,
+      "predicted_n": 25,
+      "predicted_ms": 70.272,
+      "predicted_per_token_ms": 2.9280000000000004,
+      "predicted_per_second": 341.53005464480873
+    },
+    "text": "",
+    "tool_calls": [
+      {
+        "name": "delegate_task",
+        "arguments": "{\"request\":\"Find the latest release of the Rust programming language and summarize what changed.\"}"
+      }
+    ]
+  },
+  {
+    "repeat": 3,
+    "kind": "conversation",
+    "prompt": "Explain why the sky is blue in one short sentence.",
+    "first_delta_s": 0.02681403900078294,
+    "complete_s": 0.09322082300059265,
+    "usage": {
+      "completion_tokens": 25,
+      "prompt_tokens": 128,
+      "total_tokens": 153,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 128,
+      "prompt_ms": 24.206,
+      "prompt_per_token_ms": 0.189109375,
+      "prompt_per_second": 5287.945137569198,
+      "predicted_n": 25,
+      "predicted_ms": 66.254,
+      "predicted_per_token_ms": 2.7605833333333334,
+      "predicted_per_second": 362.24227971141363
+    },
+    "text": "The sky appears blue because sunlight scatters more in the atmosphere when it hits blue wavelengths, thanks to Rayleigh scattering.",
+    "tool_calls": []
+  },
+  {
+    "repeat": 3,
+    "kind": "delegation",
+    "prompt": "Compare the files in my project and identify the biggest performance bottleneck.",
+    "first_delta_s": 0.04353177200027858,
+    "complete_s": 0.10001306800040766,
+    "usage": {
+      "completion_tokens": 26,
+      "prompt_tokens": 131,
+      "total_tokens": 157,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      }
+    },
+    "timings": {
+      "cache_n": 0,
+      "prompt_n": 131,
+      "prompt_ms": 24.364,
+      "prompt_per_token_ms": 0.18598473282442748,
+      "prompt_per_second": 5376.785421113117,
+      "predicted_n": 26,
+      "predicted_ms": 73.166,
+      "predicted_per_token_ms": 2.92664,
+      "predicted_per_second": 341.6887625399776
+    },
+    "text": "",
+    "tool_calls": [
+      {
+        "name": "delegate_task",
+        "arguments": "{\"request\":\"Compare the files in my project and identify the biggest performance bottleneck.\"}"
+      }
+    ]
+  }
+]

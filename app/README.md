@@ -119,10 +119,12 @@ endpoint. Same pattern as the whisper.cpp desktop apps.
 
 ### Models tab
 
-- **Gemma 4 E4B Q4_0** is **Recommended** and **Smallest** (4.59 GB download).
-  **Qwen3.6 35B A3B Q4_K_M** is the larger alternative (22.29 GB).
-- Both passed all eight intended delegation requests in the smoke test and use
-  Apache 2.0, with no separate commercial license. This is a small routing test,
+- **Gemma 4 E4B Q4_0** is **Recommended** (4.59 GB download).
+  **Liquid AI LFM2.5 1.2B Q4_K_M** is **Smallest** (731 MB).
+- Both passed all eight intended delegation requests in the smoke test. E4B uses
+  Apache 2.0; LFM uses the LFM Open License v1.0, with separate licensing for
+  commercial use at $10M+ annual revenue. LFM also delegated 4/8 casual requests.
+  This is a small routing test,
   not a general quality guarantee. See [selection evidence](docs/model-catalog.md).
 - Downloads are restricted to this catalog, pinned to upstream revisions and
   SHA-256 hashes. They stream to `<id>.gguf.part` and resume via HTTP `Range`.

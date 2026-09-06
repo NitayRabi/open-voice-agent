@@ -396,7 +396,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_has_pinned_permissive_downloads_and_consistent_badges() {
+    fn catalog_has_pinned_downloads_and_consistent_badges() {
         let models = curated();
         assert!(!models.is_empty());
         let recommended: Vec<_> = models
@@ -421,7 +421,7 @@ mod tests {
         let mut ids = std::collections::HashSet::new();
         for model in models {
             assert!(ids.insert(model.id.clone()));
-            assert_eq!(model.license, "Apache-2.0");
+            assert_eq!(model.license, if model.id == "lfm2.5-1.2b-instruct-q4km" { "LFM Open License v1.0" } else { "Apache-2.0" });
             assert!(!model.gated && !model.user);
             assert_eq!(model.revision.len(), 40);
             assert_eq!(model.sha256.len(), 64);
@@ -439,7 +439,7 @@ mod tests {
     fn download_allowlist_rejects_removed_custom_and_path_ids() {
         for id in [
             "qwen2.5-3b-instruct-q4km",
-            "lfm25-12b",
+            "qwen3.6-35b-a3b-q4km",
             "user-custom",
             "../model",
             "/tmp/model.gguf",
