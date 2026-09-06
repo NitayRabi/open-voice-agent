@@ -7,7 +7,7 @@ UPSTREAM="$ROOT/.tmp/speech-to-speech"
 VENV="$UPSTREAM/.venv"
 PLATFORM="$(uname -s)"
 ARCH="$(uname -m)"
-SSL_DIR="${SSL_DIR:-$ROOT/personaplex/ssl}"
+SSL_DIR="${SSL_DIR:-$ROOT/hf-s2s/ssl}"
 # The desktop app overrides these with the exact cert and key it serves the
 # web UI with, so the page and the wss endpoint present one identity and a
 # browser only has to trust a certificate once. Standalone, they fall back to

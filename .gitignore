@@ -14,16 +14,8 @@ node_modules/
 dist/
 .env.local
 
-# Virtualenv marker dirs
-personaplex/.venv/
-
 # Runtime artifacts
 *.log
-voicechat/turns/
-voicechat/vc.log
-personaplex/out/
-personaplex/diag/
-personaplex/webui.log
 
 # Audio / model blobs
 *.wav
@@ -39,7 +31,7 @@ trace*.json
 
 # Secrets / certs
 *.pem
-personaplex/ssl/
+hf-s2s/ssl/
 
 # Tauri app
 app/src-tauri/target/
