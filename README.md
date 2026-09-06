@@ -1,148 +1,100 @@
 # open-voice-agent
 
-Local speech-to-speech voice agents on the R9700, delegating asynchronously to
-OpenClaw. Two stacks were built; **VoiceChat is the one to use.**
+A local speech-to-speech voice agent that lives in a floating desktop bubble.
+Talk to it; when you ask for something that needs real thinking, it hands the
+work to a bigger model and speaks back the answer.
 
-## Desktop app
+**[`app/`](app/) is the project.** It is a Tauri app wrapping the Hugging Face
+`speech-to-speech` cascade (VAD → STT → LLM → TTS, streamed over the
+OpenAI-Realtime GA event set): an always-on-top orb, a global hotkey, mic
+capture and playback in AudioWorklets, and the same UI served over HTTP(S) to a
+browser or another device. No weights ship in the installer — it downloads GGUF
+models on demand or points at a remote endpoint.
 
-`app/` is a Tauri app that wraps the Hugging Face speech-to-speech approach in a
-floating bubble: an always-on-top orb, a settings screen, a global hotkey to
-toggle speech, mic capture + playback in AudioWorklets, and the OpenAI-Realtime
-WS cascade (or the VoiceChat turn protocol). A conversational voice model does
-the talking and has one tool, `delegate_task`, which hands real work to a single
-more capable "brain" model behind an OpenAI-compatible endpoint and speaks back
-its answer. It can also serve the same config + voice UI over HTTP(S) for a
-browser or another device. No weights ship in the installer — the app downloads
-GGUF models on demand (whisper.cpp-app style) or uses a remote endpoint. See
-[`app/README.md`](app/README.md) to build and run it.
+Build and run it from [`app/README.md`](app/README.md).
 
-Apple Silicon Macs are supported by the managed cascade: Parakeet and Qwen3-TTS
-use MLX/MPS, while the conversational GGUF runs in llama.cpp on Metal. Run
-`bash hf-s2s/setup-macos.sh` before building the ARM64 Tauri app; the complete
-macOS setup and build instructions are in [`app/README.md`](app/README.md#apple-silicon-macos).
+## The funnel
 
-    ./run.sh                         # Q4_0, https://192.168.68.46:8999
-    ./run.sh --quant Q8_0            # Q8_0
-    ./run.sh --quant F16             # unquantized F16
+Everything that works about this project is one shape, applied twice: narrow the
+thing in front of you until only the next decision is left.
 
-Q4_0 is already installed on this machine. Prepare Q8_0 or F16 once with:
+**Getting started funnels to four screens.** First run is a guided setup, shared
+by the desktop app and any browser client: welcome → pick the conversational
+model (a catalog GGUF, your own file, or a remote OpenAI-compatible endpoint) →
+configure delegation → review and start. It validates the required fields and
+starts the voice engine at the end, so "installed" and "talking" are the same
+event. No config file to find, no ports to reason about, no service to bring up
+by hand.
 
-    ./prepare-models.sh Q8_0
-    ./prepare-models.sh F16
+**The conversation funnels to one tool.** The voice model is small and does
+exactly one job: hold a conversation at real-time speed. It has a single tool,
+`delegate_task`. When you want something actually *done* — a calculation, a
+lookup, a plan, code, a decision — it calls that tool, the app acknowledges
+instantly ("on it"), and the request goes to the **brain**: one more capable
+model behind an OpenAI-compatible endpoint, off the critical path. The answer
+comes back and the voice model speaks it.
+
+```
+ bubble window ─┐                 ws://…/v1/realtime     ┌─ speech-to-speech serve ─┐
+ browser  /     ├─ VoicePipeline ───────────────────────▶│  VAD · STT · LLM · TTS    │
+ browser  :port ┘  mic + playback ◀──────────────────────│  Parakeet · LLM · Qwen3   │
+        │           (same TS, either Tauri IPC or /api)  └──────────────────────────┘
+        │ voice model calls delegate_task(request)
+        ▼
+   Rust `delegate` ──▶  POST {brain_base_url}/chat/completions   (llama.cpp / vLLM / OpenAI / …)
+        │
+        ▼  the brain's answer, spoken back into the conversation
+```
+
+Splitting the models this way is what buys the latency. A voice model kept small
+enough to stay ahead of real time can't also be the model that reasons; asking
+one model to do both is what sank the earlier attempts below. The brain is
+allowed to be slow because nothing is waiting on it — the conversation keeps
+going while it runs.
 
 ## Layout
 
-    run.sh                 launch VoiceChat + OpenClaw
-    prepare-models.sh      download and split Q4_0 or Q8_0 assets
-    voicechat/             the live stack
-      vc_openclaw.py       --serve driver, tool bridge, hands-free web UI
-      system.txt           system prompt (= the tool list; it is the warmup cost)
-      turns/               per-turn in/out wav, kept for debugging
-    personaplex/           superseded, kept for A/B. Owns the shared .venv.
-      .venv/               python 3.12 + torch 2.10.0+rocm7.0 (both stacks use it)
-      run-webui.sh         PersonaPlex alone
-      run-webui-tools.sh   PersonaPlex + the Whisper/trigger-word bridge
-      openclaw_bridge.py   that bridge
+    app/          the Tauri desktop app — frontend (TypeScript, no bundler) + Rust
+    hf-s2s/       the speech cascade the app supervises
+      run-comparison.sh   launch it standalone: ws://127.0.0.1:8766/v1/realtime
+      setup-macos.sh      one-time Python/MLX runtime prep for Apple Silicon
 
-Deliberately NOT moved in here, because they match how the box is already
-organised and are large:
+Apple Silicon Macs run the same pipeline on native backends — Parakeet and
+Qwen3-TTS on MLX/MPS, the conversational GGUF in llama.cpp on Metal. Run
+`bash hf-s2s/setup-macos.sh` before building the ARM64 app; full instructions
+are in [`app/README.md`](app/README.md#apple-silicon-macos).
 
-  ~/llama-voicechat.cpp   engine fork, next to the other llama.cpp checkouts
-  ~/models/voicechat      6.1 GB of GGUF, next to models.ini
+## What we tried first
 
-Override with `VC_BIN` / `VC_MODELS` if either moves.
-
-## Async tool calls
-
-The web stack follows the separation used by Codex realtime voice: VoiceChat is
-the live conversation frontend and OpenClaw is a background agent. When the
-function head calls `ask_openclaw`:
-
-1. the engine immediately receives a small "running in the background" tool
-   response and VoiceChat acknowledges the delegation;
-2. OpenClaw runs on a worker without blocking the model-output reader or the web
-   request;
-3. the completed result is passed through the resident VoiceChat TTS and pushed
-   to every connected browser over an event stream;
-4. the browser queues that handoff behind any audio already playing, then opens
-   the microphone again.
-
-The engine fork has one local protocol addition for step 3:
-
-    {"cmd":"say","text":"...","out":"...wav"}
-
-This is a POC handoff, not causal replay: the spoken OpenClaw result is not added
-to the 11B model's conversational state. A production implementation should add
-an engine-level context/handoff input or implement the frozen-context audio
-replay used by fully asynchronous VoiceChat runtimes.
-
-OpenClaw jobs are intentionally serialized (`max_workers=1`) so two long tool
-calls cannot contend for the same agent or speak over each other.
-
-## Quality A/B
-
-`--quant` selects the STT/LLM, audio projector, and TTS together. The active
-quantization is shown in the web UI and transcript labels. Model selection
-happens at process start because each quant owns a different resident GPU model.
-
-Q8 currently uses the known-good Q4 function-head sidecar. The converted Q8
-sidecar loads, but did not emit a tool call for an explicit delegation request
-that reliably triggers Q4. This does not change Q8 speech quality: the sidecar
-only predicts the function-channel tokens. Set `VC_FUNCTION_QUANT=Q8_0` to
-reproduce or continue investigating that behavior.
-
-As a POC safety net, a user transcript that explicitly contains `OpenClaw` is
-queued if the native function head emitted no call. The UI metadata identifies
-this as `explicit_name_fallback`; requests that do not name OpenClaw still rely
-on the model's native function decision.
-
-    ./run.sh --quant Q4_0 --port 8999
-    ./run.sh --quant Q8_0 --port 9000
-
-Do not run both concurrently unless VRAM headroom has been checked. For a fair
-subjective comparison, use the same microphone, prompt, system prompt, and fresh
-session for each quant.
-
-## Which stack, and why
+Two earlier stacks were built on this box and both are gone as of this commit
+(`git log` if you want them back). Neither is worth reviving, but the reasons
+are worth keeping, because they are why the app looks the way it does.
 
 | | PersonaPlex 7B | VoiceChat 11B |
 |---|---|---|
-| ms/frame (80 ms budget) | 83.6 -> RTF **1.04** | 47.9 -> RTF **0.60** |
+| ms/frame (80 ms budget) | 83.6 → RTF **1.04** | 47.9 → RTF **0.60** |
 | VRAM | 20.2 GB | **9.6 GB** |
-| free alongside | 11.7 GB | **22.3 GB** (a local coding model fits) |
-| tool calling | none; needed Whisper + a spoken trigger word | **native function head** |
+| free alongside | 11.7 GB | **22.3 GB** |
+| tool calling | none; needed Whisper + a spoken trigger word | native function head |
 
-PersonaPlex ran permanently 4.5% behind real time, which starved the browser's
-jitter buffer -- that was the crackling, not the mic and not the model's audio
-(both measured clean). Root cause was `other_mimi`, a second Mimi codec whose
-encode and decode results are discarded every frame: 7.16 ms/frame of dead
-compute against a 3.6 ms deficit. Removing it is bit-identical (same output
-md5) and is patched in `personaplex/src/`.
+**PersonaPlex** ran permanently 4.5% behind real time, which starved the
+browser's jitter buffer — that was the crackling, not the mic and not the
+model's audio, both of which measured clean. Root cause was `other_mimi`, a
+second Mimi codec whose encode and decode results were discarded every frame:
+7.16 ms/frame of dead compute against a 3.6 ms deficit. Removing it was
+bit-identical (same output md5). It still had no native tool calling.
 
-## Two traps in llama-voicechat
+**VoiceChat** was fast enough and did have a native function head, but it was
+one model doing everything, and the engine fork it needed had sharp edges:
+`--system-file` was silently ignored in `--serve` mode (the model would say it
+could not do anything, which was true — its tool list was empty), and
+`VC_NO_BARGE=1` + `VC_FORCE_BOS=1` were both mandatory or the model barged in a
+second into every clip. It was push-to-talk by nature. A measured 17.9 s tool
+turn spent 8.25 s just speaking the result, because per-frame cost grows with
+context depth and a tool turn is the deepest context there is: system prompt +
+audio + call + result, all before the first word comes out.
 
-**`--system-file` is silently ignored in `--serve` mode.** `main()` only calls
-`run_system()` on the one-shot path. The symptom is not an error: the model
-says it cannot do anything, which is TRUE because its tool list is empty, and a
-one-shot `--tool-response` test passes because that path does apply the prompt.
-Send `{"cmd":"system","text":...}` after `ready`; confirm via the `system_start`
-event and its token count.
-
-**`VC_NO_BARGE=1` + `VC_FORCE_BOS=1` are mandatory, together.** Without them the
-model barges in ~1 s into the clip, answers only that first second, and every
-later turn degenerates. So it is push-to-talk by nature; the UI does client-side
-VAD auto-turns instead of true interruptible duplex.
-
-## Where a tool turn's time goes (measured, 17.9 s turn)
-
-    turn start        -> tool_call_start    3.57s   listening + deciding
-    tool_call_start   -> tool_call          0.30s   writing the call
-    tool_call         -> tool_response      3.85s   OpenClaw
-    tool_response     -> tool_response_end  1.01s   splicing the result, 56 frames
-    tool_response_end -> audio              8.25s   speaking, 51 frames @ 162 ms
-
-Per-frame cost grows with context depth, and a tool turn is deep: system prompt
-+ audio + call + result before it starts speaking. Hence the short system prompt
-and the one-sentence tool result -- both are latency, not just tokens.
-
-`PPLEX_DIAG=1` on PersonaPlex dumps per-turn input/output wav plus frame timings.
+That last number is the whole argument for the funnel. Keep the speaking model
+small and its context shallow, keep the system prompt short, keep the tool
+result to one sentence, and push everything else to a model that is allowed to
+take its time.

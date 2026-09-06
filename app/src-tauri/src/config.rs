@@ -219,7 +219,7 @@ pub struct Settings {
     #[serde(default)]
     pub launch_cwd: String,
     /// Extra env for the launch command. These are the engine knobs — STT device,
-    /// LLM binary/model, TTS backend, quant — surfaced from run-comparison.sh / run.sh.
+    /// LLM binary/model, TTS backend — surfaced from hf-s2s/run-comparison.sh.
     #[serde(default)]
     pub launch_env: BTreeMap<String, String>,
     /// HTTP URL polled to decide the backend is up.

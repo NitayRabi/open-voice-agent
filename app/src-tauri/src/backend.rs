@@ -18,7 +18,7 @@ pub struct BackendManager {
 }
 
 fn looks_like_repo(p: &std::path::Path) -> bool {
-    p.join("hf-s2s").is_dir() || p.join("run.sh").is_file()
+    p.join("hf-s2s").is_dir()
 }
 
 fn has_speech_runtime(p: &std::path::Path) -> bool {

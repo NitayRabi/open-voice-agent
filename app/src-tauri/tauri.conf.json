@@ -59,7 +59,7 @@
     ],
     "category": "Productivity",
     "shortDescription": "Floating voice agent with async delegation",
-    "longDescription": "A floating voice-agent bubble on the Hugging Face speech-to-speech stack (VAD -> STT -> LLM -> TTS over the OpenAI Realtime event set), with a global push-to-toggle hotkey, a settings screen, and asynchronous delegation to an ACP agent (OpenClaw)."
+    "longDescription": "A floating voice-agent bubble on the Hugging Face speech-to-speech stack (VAD -> STT -> LLM -> TTS over the OpenAI Realtime event set), with a global push-to-toggle hotkey, a settings screen, and asynchronous delegation to a more capable model behind an OpenAI-compatible endpoint."
   },
   "plugins": {}
 }
