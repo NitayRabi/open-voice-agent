@@ -70,6 +70,13 @@ Qwen3-TTS on MLX/MPS, the conversational GGUF in llama.cpp on Metal. Run
 `bash hf-s2s/setup-macos.sh` before building the ARM64 app; full instructions
 are in [`app/README.md`](app/README.md#apple-silicon-macos).
 
+## Android client
+
+`android-client/` is a remote-only native client: pair it with the desktop
+node's web URL and pairing code, then tap to talk. It never starts a local
+server or model. An optional draggable foreground orb can sit over other apps
+for one-tap voice access. See [`android-client/README.md`](android-client/README.md).
+
 ## What we tried first
 
 Two earlier stacks were built on this box and both are gone as of this commit
