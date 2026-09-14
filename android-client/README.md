@@ -2,7 +2,7 @@
 
 A remote-only Android client for an Open Voice Agent node. It does not bundle,
 download, or start a model or server. The app fetches the node's client settings
-by exchanging a one-time pairing code for a revocable device credential. Voice
+by exchanging the desktop pairing code for a revocable device credential. Voice
 traffic uses the node's authenticated realtime proxy, and delegated tasks route
 back through the node to its configured ACP provider (OpenClaw by default).
 

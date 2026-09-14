@@ -58,7 +58,7 @@ class NodeClient(baseUrl: String, accessToken: String, trustSelfSigned: Boolean)
     private val root = baseUrl.trim().trimEnd('/')
     private val auth = accessToken.trim()
 
-    /** Exchange a short-lived/manual pairing code for this watch's credential. */
+    /** Exchange the reusable desktop pairing code for this watch's revocable credential. */
     fun pair(code: String, callback: (Result<PairingCredential>) -> Unit) {
         val body = pairingRequestBody(code).toRequestBody("application/json".toMediaType())
         val request = Request.Builder().url(root + "/api/access/pair").post(body).build()
