@@ -29,10 +29,53 @@ data class NodeSettings(
     val speakDelegatedResult: Boolean,
 )
 
-class NodeClient(baseUrl: String, pairingCode: String, trustSelfSigned: Boolean) : Closeable {
+data class PairingCredential(
+    val accessToken: String,
+    val baseUrl: String?,
+    val deviceId: String?,
+)
+
+internal fun pairingRequestBody(code: String): String = JSONObject()
+    .put("code", code.trim())
+    .put("device", JSONObject().put("type", "wear").put("label", "Pixel Watch"))
+    .toString()
+
+internal fun parsePairingResponse(raw: String): PairingCredential {
+    val json = JSONObject(raw)
+    val token = json.optString("access_token").trim()
+    require(token.isNotEmpty()) { "Node did not return a device access token" }
+    return PairingCredential(
+        accessToken = token,
+        baseUrl = json.optString("base_url").trim().ifEmpty { null },
+        deviceId = json.optJSONObject("device")?.optString("id")?.trim()?.ifEmpty { null },
+    )
+}
+
+class NodeClient(baseUrl: String, accessToken: String, trustSelfSigned: Boolean) : Closeable {
     val http: OkHttpClient = if (trustSelfSigned) insecureClient() else OkHttpClient()
     private val root = baseUrl.trim().trimEnd('/')
-    private val auth = pairingCode.trim()
+    private val auth = accessToken.trim()
+
+    /** Exchange a short-lived/manual pairing code for this watch's credential. */
+    fun pair(code: String, callback: (Result<PairingCredential>) -> Unit) {
+        val body = pairingRequestBody(code).toRequestBody("application/json".toMediaType())
+        val request = Request.Builder().url(root + "/api/access/pair").post(body).build()
+        http.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) = callback(Result.failure(e))
+
+            override fun onResponse(call: Call, response: Response) = response.use {
+                val raw = it.body?.string().orEmpty()
+                if (!it.isSuccessful) {
+                    val message = runCatching { JSONObject(raw).optString("error") }.getOrNull()
+                        ?.takeIf(String::isNotBlank)
+                        ?: if (it.code == 401) "Pairing code rejected" else "Pairing returned ${it.code}"
+                    callback(Result.failure(IOException(message)))
+                } else {
+                    callback(runCatching { parsePairingResponse(raw) })
+                }
+            }
+        })
+    }
 
     fun settings(callback: (Result<NodeSettings>) -> Unit) {
         http.newCall(request("/api/settings")).enqueue(object : Callback {
@@ -41,7 +84,7 @@ class NodeClient(baseUrl: String, pairingCode: String, trustSelfSigned: Boolean)
             override fun onResponse(call: Call, response: Response) = response.use {
                 val raw = it.body?.string().orEmpty()
                 if (!it.isSuccessful) {
-                    callback(Result.failure(IOException(if (it.code == 401) "Pairing code rejected" else "Node returned ${it.code}")))
+                    callback(Result.failure(IOException(if (it.code == 401) "Watch access expired or was revoked" else "Node returned ${it.code}")))
                     return@use
                 }
                 callback(runCatching {

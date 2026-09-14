@@ -21,6 +21,7 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 class MainActivity : ComponentActivity() {
     private lateinit var store: SecureNodeStore
@@ -56,23 +57,26 @@ class MainActivity : ComponentActivity() {
     // password. Direct entry is intentional so the standalone watch can pair
     // without requiring the phone app, and the field remains masked.
     @SuppressLint("WearPasswordInput")
-    private fun showPairingScreen(message: String? = null) {
+    private fun showPairingScreen(
+        message: String? = null,
+        initialUrl: String = "",
+        initialTrust: Boolean = false,
+    ) {
         stopVoice(false)
         container.removeAllViews()
         title("Pair watch")
         container.addView(caption(message ?: "Connect directly to your Open Voice node"), match(dp(5)))
-        val saved = store.load()
-        val url = field("Node URL", saved?.url.orEmpty(), InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
+        val url = field("Node URL", initialUrl, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
         val code = field(
             "Pairing code",
-            saved?.pairingCode.orEmpty(),
+            "",
             InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
         )
         val trust = CheckBox(this).apply {
             setText(R.string.trust_self_signed)
             setTextColor(MUTED)
             textSize = 12f
-            isChecked = saved?.trustSelfSigned ?: false
+            isChecked = initialTrust
         }
         container.addView(url, match(dp(12)))
         container.addView(code, match(dp(8)))
@@ -80,26 +84,28 @@ class MainActivity : ComponentActivity() {
         container.addView(actionButton("Pair") {
             val cleanUrl = url.text.toString().trim().trimEnd('/')
             val cleanCode = code.text.toString().trim()
-            if ((!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) || cleanCode.isBlank()) {
+            if (cleanUrl.toHttpUrlOrNull() == null || cleanCode.isBlank()) {
                 showPairingScreen("Enter a node URL and pairing code")
                 return@actionButton
             }
-            verifyPairing(SavedNode(cleanUrl, cleanCode, trust.isChecked))
+            exchangePairingCode(cleanUrl, cleanCode, trust.isChecked)
         }, match(dp(10)))
     }
 
-    private fun verifyPairing(node: SavedNode) {
+    private fun exchangePairingCode(url: String, code: String, trustSelfSigned: Boolean) {
         container.removeAllViews()
         title("Pairing…")
-        container.addView(caption("Checking the node"), match(dp(5)))
-        val checkingClient = NodeClient(node.url, node.pairingCode, node.trustSelfSigned)
+        container.addView(caption("Creating a device credential"), match(dp(5)))
+        val checkingClient = NodeClient(url, "", trustSelfSigned)
         client = checkingClient
-        checkingClient.settings { result ->
+        checkingClient.pair(code) { result ->
             runOnUiThread {
                 if (client !== checkingClient || isFinishing || isDestroyed) return@runOnUiThread
                 result.fold(
-                    onSuccess = {
-                        store.save(node)
+                    onSuccess = { credential ->
+                        // Preserve the address the user knows reaches the node;
+                        // base_url can differ behind a TLS-terminating proxy.
+                        store.save(SavedNode(url, credential.accessToken, trustSelfSigned))
                         checkingClient.close()
                         client = null
                         showTalkScreen("Paired")
@@ -107,7 +113,7 @@ class MainActivity : ComponentActivity() {
                     onFailure = {
                         checkingClient.close()
                         client = null
-                        showPairingScreen(it.message ?: "Could not reach node")
+                        showPairingScreen(it.message ?: "Could not reach node", url, trustSelfSigned)
                     },
                 )
             }
@@ -134,11 +140,24 @@ class MainActivity : ComponentActivity() {
             topMargin = dp(14)
         })
         container.addView(status, match(dp(12)))
-        container.addView(actionButton("Pairing settings") { showPairingScreen() }.apply {
+        container.addView(actionButton("Forget & re-pair") { showForgetConfirmation() }.apply {
             textSize = 12f
             setTextColor(MUTED)
             background = null
         }, match(dp(8)))
+    }
+
+    private fun showForgetConfirmation() {
+        val saved = store.load() ?: return showPairingScreen()
+        stopVoice(false)
+        container.removeAllViews()
+        title("Forget this watch?")
+        container.addView(caption("The saved device token will be erased."), match(dp(5)))
+        container.addView(actionButton("Cancel") { showTalkScreen() }, match(dp(14)))
+        container.addView(actionButton("Forget & re-pair") {
+            store.clear()
+            showPairingScreen(initialUrl = saved.url, initialTrust = saved.trustSelfSigned)
+        }, match(dp(6)))
     }
 
     private fun requestTalk() {
@@ -152,7 +171,7 @@ class MainActivity : ComponentActivity() {
         if (starting || active) return
         starting = true
         showTalkScreen("Connecting…")
-        val newClient = NodeClient(node.url, node.pairingCode, node.trustSelfSigned)
+        val newClient = NodeClient(node.url, node.accessToken, node.trustSelfSigned)
         client = newClient
         newClient.settings { result ->
             runOnUiThread {
