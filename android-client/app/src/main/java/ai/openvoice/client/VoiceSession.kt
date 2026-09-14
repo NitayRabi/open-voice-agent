@@ -21,6 +21,7 @@ class VoiceSession(
     private var socket: WebSocket? = null
     private var recorder: AudioRecord? = null
     private var player: AudioTrack? = null
+    private var captureThread: Thread? = null
     private val active = AtomicBoolean(false)
     @Volatile private var responseActive = false
     private val reports = ArrayDeque<String>()
@@ -43,37 +44,48 @@ class VoiceSession(
                 active.set(true); ws.send(sessionUpdate().toString()); event("listening", null); captureLoop()
             }
             override fun onMessage(ws: WebSocket, text: String) = handle(JSONObject(text))
-            override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) { active.set(false); event("error", t.message) }
-            override fun onClosed(ws: WebSocket, code: Int, reason: String) { if (active.getAndSet(false)) event("idle", null) }
+            override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
+                active.set(false); releaseAudio(); event("error", t.message)
+            }
+            override fun onClosed(ws: WebSocket, code: Int, reason: String) {
+                if (active.getAndSet(false)) { releaseAudio(); event("idle", null) }
+            }
         })
     }
 
     fun stop() {
-        active.set(false); recorder?.stopSafely(); recorder?.release(); recorder = null
-        player?.pause(); player?.flush(); player?.release(); player = null
+        active.set(false); releaseAudio()
         socket?.close(1000, "stopped"); socket = null; event("idle", null)
     }
 
     private fun AudioRecord.stopSafely() = try { stop() } catch (_: Exception) {}
 
-    private fun captureLoop() = Thread {
-        val r = recorder ?: return@Thread
-        val samples = ShortArray(settings.sampleRate * 40 / 1000)
-        r.startRecording()
-        while (active.get()) {
-            val n = r.read(samples, 0, samples.size)
-            if (n > 0) {
-                var sum = 0.0
-                val bytes = ByteArray(n * 2)
-                for (i in 0 until n) {
-                    val v = samples[i].toInt(); sum += v.toDouble() * v
-                    bytes[i * 2] = v.toByte(); bytes[i * 2 + 1] = (v shr 8).toByte()
+    @Synchronized private fun releaseAudio() {
+        captureThread?.interrupt(); captureThread = null
+        recorder?.stopSafely(); recorder?.release(); recorder = null
+        player?.pause(); player?.flush(); player?.release(); player = null
+    }
+
+    private fun captureLoop() {
+        captureThread = Thread {
+            val r = recorder ?: return@Thread
+            val samples = ShortArray(settings.sampleRate * 40 / 1000)
+            r.startRecording()
+            while (active.get()) {
+                val n = r.read(samples, 0, samples.size)
+                if (n > 0) {
+                    var sum = 0.0
+                    val bytes = ByteArray(n * 2)
+                    for (i in 0 until n) {
+                        val v = samples[i].toInt(); sum += v.toDouble() * v
+                        bytes[i * 2] = v.toByte(); bytes[i * 2 + 1] = (v shr 8).toByte()
+                    }
+                    event("level", (kotlin.math.sqrt(sum / n) / 32768.0).toString())
+                    socket?.send(JSONObject().put("type", "input_audio_buffer.append").put("audio", Base64.encodeToString(bytes, Base64.NO_WRAP)).toString())
                 }
-                event("level", (kotlin.math.sqrt(sum / n) / 32768.0).toString())
-                socket?.send(JSONObject().put("type", "input_audio_buffer.append").put("audio", Base64.encodeToString(bytes, Base64.NO_WRAP)).toString())
             }
-        }
-    }.apply { name = "ova-microphone"; start() }
+        }.apply { name = "ova-microphone"; start() }
+    }
 
     private fun sessionUpdate(): JSONObject {
         // OpenAI's Realtime schema only accepts an explicitly declared PCM
