@@ -564,6 +564,36 @@ async function refreshWebState(): Promise<void> {
   } catch {}
 }
 
+async function renderDevices(): Promise<void> {
+  const box = $("device_list");
+  try {
+    const devices = await invoke("paired_devices");
+    box.innerHTML = "";
+    if (!devices.length) { box.textContent = "No paired devices."; return; }
+    for (const device of devices) {
+      const row = document.createElement("div"); row.className = "device-row";
+      const info = document.createElement("div");
+      info.innerHTML = `<strong>${escapeHtml(device.label)}</strong><div class="meta">${escapeHtml(device.type)} · added ${new Date(device.created_at).toLocaleString()}</div>`;
+      const revoke = document.createElement("button"); revoke.className = "secondary"; revoke.textContent = "Revoke";
+      revoke.onclick = () => void invoke("revoke_device", { id: device.id }).then(renderDevices).catch((e: unknown) => flash(errorText(e)));
+      row.append(info, revoke); box.appendChild(row);
+    }
+  } catch (e) { box.textContent = `Unavailable: ${errorText(e)}`; }
+}
+
+$("issue_device").addEventListener("click", () => void (async () => {
+  try {
+    const label = $in("device_label").value.trim() || "Paired device";
+    const issued = await invoke("issue_device", { deviceType: $sel("device_type").value, label });
+    const origin = (await invoke("web_url").catch(() => null)) || "http(s)://this-host";
+    const link = `${origin.replace(/\/$/, "")}/c#${issued.access_token}`;
+    const out = $("issued_device"); out.hidden = false;
+    out.innerHTML = `Connection link (shown once):<br><code>${escapeHtml(link)}</code>`;
+    await navigator.clipboard?.writeText(link).catch(() => undefined);
+    flash("device connection copied — treat it like a password"); await renderDevices();
+  } catch (e) { flash(`could not create device: ${errorText(e)}`); }
+})());
+
 // ── mic devices ─────────────────────────────────────────────────────────
 async function loadMics(): Promise<void> {
   try {
@@ -599,6 +629,7 @@ initSetupForm();
 // Device enumeration can wait on browser permission UI. Never hold the
 // settings/setup screen behind that prompt.
 void refreshWebState();
+void renderDevices();
 void loadMics();
 $("version").textContent = "v" + ((await invoke("app_version").catch(() => "")) || "");
 if (isWeb) {

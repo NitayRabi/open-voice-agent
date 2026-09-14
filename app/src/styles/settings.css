@@ -21,3 +21,4 @@ footer{display:flex;align-items:center;gap:.6rem;padding:.75rem max(1rem,calc((1
 .model-badge { display: inline-block; padding: 3px 7px; border: 1px solid currentColor; border-radius: 6px; font-size: 11px; font-weight: 600; line-height: 1.3; }
 .model-badge.recommended { color: #79dfb2; background: #79dfb212; }
 .model-badge.smallest { color: #a8c7ff; background: #a8c7ff12; }
+.credential-output{padding:.75rem;overflow-wrap:anywhere;border:1px solid hsl(var(--border));border-radius:var(--radius);background:hsla(var(--muted),.45);font-size:.78rem}.credential-output code{user-select:all}.device-row{display:flex;align-items:center;justify-content:space-between;gap:.7rem;padding:.65rem .8rem;border:1px solid hsl(var(--border));border-radius:var(--radius)}.device-row .meta{color:hsl(var(--muted-foreground));font-size:.74rem}

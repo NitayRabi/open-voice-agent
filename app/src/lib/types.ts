@@ -5,6 +5,20 @@
 /** Where a model runs: a downloaded GGUF, or an OpenAI-compatible endpoint. */
 export type ModelSource = "local" | "remote";
 
+export interface PairedDevice {
+  id: string;
+  type: string;
+  label: string;
+  created_at: number;
+  last_used_at: number | null;
+}
+
+export interface IssuedDeviceCredential {
+  access_token: string;
+  token_type: "Bearer";
+  device: PairedDevice;
+}
+
 /** Lifecycle of the voice pipeline; also the orb's visual state. */
 export type PipelineState =
   | "idle"

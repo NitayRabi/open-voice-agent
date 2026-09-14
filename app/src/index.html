@@ -341,6 +341,17 @@
           <button id="web_open" type="button" class="secondary">Open web UI</button>
           <span id="web_state" class="muted">stopped</span>
         </div>
+        <div id="device_manager">
+          <h3>Paired devices</h3>
+          <p class="muted">Each phone, watch, or browser gets its own credential. Revoking one signs that device out without affecting the others.</p>
+          <div class="row">
+            <input id="device_label" type="text" placeholder="Pixel Watch" autocomplete="off" />
+            <select id="device_type"><option value="wear">Wear OS</option><option value="android">Android</option><option value="web">Browser</option><option value="remote">Other</option></select>
+            <button id="issue_device" type="button" class="secondary">Create connection</button>
+          </div>
+          <div id="issued_device" class="credential-output" hidden></div>
+          <div id="device_list" class="model-list"></div>
+        </div>
       </section>
 
       <!-- LOG -->

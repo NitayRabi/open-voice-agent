@@ -5,6 +5,8 @@
 import type {
   AssetProgress,
   ModelsList,
+  PairedDevice,
+  IssuedDeviceCredential,
   Settings,
   TranscriptDetail,
 } from "./types.js";
@@ -36,7 +38,7 @@ export const hasTauri = !!T;
 export const isWeb = !hasTauri;
 
 interface ApiOptions {
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "DELETE";
   body?: unknown;
 }
 
@@ -76,6 +78,9 @@ export interface Commands {
   model_remove: { args: { id: string }; result: void };
   model_forget: { args: { id: string }; result: void };
   model_resolve: { args: { idOrPath: string }; result: string | null };
+  paired_devices: { args: void; result: PairedDevice[] };
+  issue_device: { args: { deviceType: string; label: string }; result: IssuedDeviceCredential };
+  revoke_device: { args: { id: string }; result: boolean };
 }
 
 export type CommandName = keyof Commands;
@@ -108,6 +113,11 @@ const WEB: WebImpls = {
       method: "POST",
       body: { id_or_path: idOrPath },
     }).then((d) => d.path),
+  paired_devices: () => api<{ devices: PairedDevice[] }>("/api/access/devices").then((d) => d.devices),
+  issue_device: ({ deviceType, label }) => api<IssuedDeviceCredential>("/api/access/devices", {
+    method: "POST", body: { device: { type: deviceType, label } },
+  }),
+  revoke_device: ({ id }) => api<void>(`/api/access/devices/${encodeURIComponent(id)}`, { method: "DELETE" }).then(() => true),
 };
 
 export async function invoke<K extends CommandName>(

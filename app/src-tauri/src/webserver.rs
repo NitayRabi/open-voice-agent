@@ -219,6 +219,10 @@ fn json_response(value: Value, status: u16) -> Response<io::Cursor<Vec<u8>>> {
     r
 }
 
+fn void_respond<R: std::io::Read>(req: Request, response: Response<R>) {
+    let _ = req.respond(response);
+}
+
 fn query_param(url: &str, key: &str) -> Option<String> {
     let q = url.split_once('?')?.1;
     for pair in q.split('&') {
@@ -230,24 +234,46 @@ fn query_param(url: &str, key: &str) -> Option<String> {
     None
 }
 
-fn authorized(req: &Request, token: &str) -> bool {
-    if token.is_empty() {
-        return true;
-    }
-    let cookie_needle = format!("ova_token={token}");
+#[derive(Clone)]
+enum Access {
+    Unauthenticated,
+    Admin,
+    Device { token: String, id: String },
+}
+
+fn presented_token(req: &Request) -> Option<String> {
     for h in req.headers() {
         let v = h.value.as_str();
-        if h.field.equiv("Authorization") && v.strip_prefix("Bearer ") == Some(token) {
-            return true;
+        if h.field.equiv("Authorization") {
+            if let Some(value) = v.strip_prefix("Bearer ") { return Some(value.trim().to_string()); }
         }
-        if h.field.equiv("X-OVA-Token") && v == token {
-            return true;
-        }
-        if h.field.equiv("Cookie") && v.split(';').any(|c| c.trim() == cookie_needle) {
-            return true;
+        if h.field.equiv("X-OVA-Token") { return Some(v.trim().to_string()); }
+        if h.field.equiv("Cookie") {
+            if let Some(value) = v.split(';').map(str::trim)
+                .find_map(|c| c.strip_prefix("ova_token=")) { return Some(value.to_string()); }
         }
     }
-    false
+    None
+}
+
+fn authorize(req: &Request, app: &AppHandle, configured_token: &str) -> Option<Access> {
+    if configured_token.is_empty() { return Some(Access::Unauthenticated); }
+    let token = presented_token(req)?;
+    if token == configured_token { return Some(Access::Admin); }
+    app.state::<AppState>().devices.authenticate(&token)
+        .map(|id| Access::Device { token, id })
+}
+
+fn privileged(req: &Request, access: &Access) -> bool {
+    local_request(req) || matches!(access, Access::Admin)
+}
+
+fn local_request(req: &Request) -> bool {
+    let forwarded = req.headers().iter().any(|h| {
+        let name = h.field.as_str().as_str().to_ascii_lowercase();
+        name == "forwarded" || name == "via" || name == "x-real-ip" || name.starts_with("x-forwarded-")
+    });
+    !forwarded && req.remote_addr().is_some_and(|addr| addr.ip().is_loopback())
 }
 
 fn form_param(body: &str, key: &str) -> Option<String> {
@@ -347,17 +373,35 @@ fn serve_pair(req: Request, next: &str, invalid: bool) -> io::Result<()> {
     req.respond(resp)
 }
 
-fn pair_success(req: Request, cfg: &Settings, next: &str) -> io::Result<()> {
+fn pair_success(req: Request, cfg: &Settings, next: &str, token: &str) -> io::Result<()> {
     let mut resp = Response::empty(303);
     resp.add_header(header("Location", &safe_next(next)));
-    let secure = if cfg.web_tls_cert.trim().is_empty() { "" } else { "; Secure" };
+    let forwarded_https = req.headers().iter().find(|h| h.field.equiv("X-Forwarded-Proto"))
+        .is_some_and(|h| h.value.as_str().eq_ignore_ascii_case("https"));
+    let secure = if cfg.web_tls_cert.trim().is_empty() && !forwarded_https { "" } else { "; Secure" };
     resp.add_header(header(
         "Set-Cookie",
         &format!(
             "ova_token={}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000{secure}",
-            cfg.web_token
+            token
         ),
     ));
+    req.respond(resp)
+}
+
+fn connection_page() -> &'static str {
+    r#"<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect — Open Voice Agent</title></head>
+<body><main><h1>Connect to Open Voice Agent</h1><p id="status">Connecting…</p></main><script>
+(async()=>{const n=document.getElementById('status'),token=location.hash.slice(1);history.replaceState(null,'',location.pathname);if(!token){n.textContent='This connection link is incomplete.';return}try{const r=await fetch('/api/access/session',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token})});const b=await r.json().catch(()=>({}));if(!r.ok)throw Error(b.error||'Connection failed');location.replace('/')}catch(e){n.textContent=e.message}})();
+</script></body></html>"#
+}
+
+fn serve_connection_page(req: Request) -> io::Result<()> {
+    let mut resp = Response::from_string(connection_page());
+    resp.add_header(header("Content-Type", "text/html; charset=utf-8"));
+    resp.add_header(header("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"));
+    resp.add_header(header("Referrer-Policy", "no-referrer"));
+    resp.add_header(header("Cache-Control", "no-store"));
     req.respond(resp)
 }
 
@@ -420,6 +464,18 @@ fn realtime_url(host: &str, cfg: &Settings) -> String {
 
 fn browser_settings(req: &Request, cfg: &Settings) -> Settings {
     let mut out = cfg.clone();
+    // Pairing credentials can configure the app, but may not mint more devices
+    // by reading the reusable pairing code back out of settings.
+    out.web_token.clear();
+    out.brain_api_key.clear();
+    out.speech_remote_api_key.clear();
+    out.hf_token.clear();
+    for (key, value) in &mut out.launch_env {
+        let key = key.to_ascii_uppercase();
+        if ["TOKEN", "KEY", "SECRET", "PASSWORD"].iter().any(|needle| key.contains(needle)) {
+            value.clear();
+        }
+    }
     let raw_host = req
         .headers()
         .iter()
@@ -431,12 +487,103 @@ fn browser_settings(req: &Request, cfg: &Settings) -> Settings {
     out
 }
 
+const PROTOCOL_VERSION: &str = "1.0.0";
+const CAPABILITIES: &[&str] = &[
+    "access.device-credentials-v1",
+    "access.fragment-session-v1",
+    "access.per-device-revocation-v1",
+    "realtime.openai-direct-v1",
+];
+
+fn public_origin(req: &Request, cfg: &Settings) -> String {
+    let host = req.headers().iter().find(|h| h.field.equiv("Host"))
+        .map(|h| h.value.as_str()).unwrap_or("127.0.0.1");
+    let forwarded_https = req.headers().iter().find(|h| h.field.equiv("X-Forwarded-Proto"))
+        .is_some_and(|h| h.value.as_str().eq_ignore_ascii_case("https"));
+    let scheme = if forwarded_https || !cfg.web_tls_cert.trim().is_empty() { "https" } else { "http" };
+    format!("{scheme}://{host}")
+}
+
+fn allowed_pairing_origin(req: &Request, cfg: &Settings) -> bool {
+    let Some(origin) = req.headers().iter().find(|h| h.field.equiv("Origin")).map(|h| h.value.as_str()) else {
+        // Native clients do not send Origin.
+        return true;
+    };
+    origin == public_origin(req, cfg)
+}
+
+fn issued_response(req: &Request, cfg: &Settings, issued: crate::device_access::IssuedCredential) -> Value {
+    let origin = public_origin(req, cfg);
+    let host = host_of(req.headers().iter().find(|h| h.field.equiv("Host")).map(|h| h.value.as_str()).unwrap_or("127.0.0.1"));
+    json!({
+        "access_token": issued.access_token,
+        "token_type": issued.token_type,
+        "device": issued.device,
+        "base_url": origin,
+        "connection_url": format!("{origin}/c#{}", issued.access_token),
+        "realtime_url": realtime_url(&host, cfg),
+        "protocol_version": PROTOCOL_VERSION,
+        "capabilities": CAPABILITIES,
+    })
+}
+
 fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: Request) {
     let cfg = app.state::<AppState>().settings.lock().clone();
     let method = req.method().clone();
     let url = req.url().to_string();
     let path = path_of(&url).to_string();
     let is_get = matches!(method, Method::Get | Method::Head);
+
+    if path == "/api/health" {
+        let value = json!({
+            "ok": true,
+            "protocol_version": PROTOCOL_VERSION,
+            "protocolVersion": PROTOCOL_VERSION,
+            "capabilities": CAPABILITIES,
+            "paired_devices": app.state::<AppState>().devices.list().len(),
+            "realtime_auth": "direct-backend-unenforced",
+        });
+        let _ = req.respond(json_response(value, 200));
+        return;
+    }
+
+    if path == "/c" && is_get { let _ = serve_connection_page(req); return; }
+
+    if path == "/api/access/pair" && method == Method::Post {
+        if !allowed_pairing_origin(&req, &cfg) {
+            let _ = req.respond(json_response(json!({"error":"origin not allowed"}), 403));
+            return;
+        }
+        let body = read_body(&mut req);
+        let code = body.get("code").and_then(Value::as_str).unwrap_or_default();
+        if !cfg.web_token.is_empty() && code != cfg.web_token {
+            let _ = req.respond(json_response(json!({"error":"pairing code is invalid", "code":"pairing_invalid"}), 401));
+            return;
+        }
+        let device = body.get("device").unwrap_or(&Value::Null);
+        let kind = device.get("type").and_then(Value::as_str).unwrap_or("remote");
+        let label = device.get("label").and_then(Value::as_str).unwrap_or("Paired device");
+        match app.state::<AppState>().devices.issue(kind, label) {
+            Ok(issued) => { let value = issued_response(&req, &cfg, issued); let _ = req.respond(json_response(value, 201)); }
+            Err(e) => { let _ = req.respond(json_response(json!({"error":e.to_string()}), 500)); }
+        }
+        return;
+    }
+
+    if path == "/api/access/session" && method == Method::Post {
+        if !allowed_pairing_origin(&req, &cfg) {
+            let _ = req.respond(json_response(json!({"error":"origin not allowed"}), 403));
+            return;
+        }
+        let body = read_body(&mut req);
+        let token = body.get("token").and_then(Value::as_str).unwrap_or_default();
+        if app.state::<AppState>().devices.authenticate(token).is_none() {
+            let _ = req.respond(json_response(json!({"error":"device credential is invalid or revoked", "code":"device_credential_invalid"}), 401));
+        } else {
+            let _ = pair_success(req, &cfg, "/", token);
+        }
+        return;
+    }
 
     if path == "/pair" {
         let result = match method {
@@ -446,7 +593,10 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
                 let code = form_param(&body, "pairing_code").unwrap_or_default();
                 let next = form_param(&body, "next").unwrap_or_else(|| "/".into());
                 if cfg.web_token.is_empty() || code == cfg.web_token {
-                    pair_success(req, &cfg, &next)
+                    match app.state::<AppState>().devices.issue("web", "Web browser") {
+                        Ok(issued) => pair_success(req, &cfg, &next, &issued.access_token),
+                        Err(_) => serve_pair(req, &next, true),
+                    }
                 } else {
                     serve_pair(req, &next, true)
                 }
@@ -461,7 +611,7 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
         return;
     }
 
-    if !authorized(&req, &cfg.web_token) {
+    let Some(access) = authorize(&req, app, &cfg.web_token) else {
         let result = if is_get && !path.starts_with("/api/") {
             serve_pair(req, &path, false)
         } else {
@@ -469,20 +619,56 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
         };
         let _ = result;
         return;
+    };
+
+    if path == "/api/access/devices" && is_get {
+        let status = if local_request(&req) { 200 } else { 403 };
+        let value = if status == 200 { json!({"devices": app.state::<AppState>().devices.list()}) }
+            else { json!({"error":"paired devices can only be managed locally"}) };
+        let _ = req.respond(json_response(value, status)); return;
+    }
+    if path == "/api/access/devices" && method == Method::Post {
+        if !local_request(&req) { let _ = req.respond(json_response(json!({"error":"device credentials can only be issued locally"}), 403)); return; }
+        let body = read_body(&mut req); let device = body.get("device").unwrap_or(&Value::Null);
+        let kind = device.get("type").and_then(Value::as_str).unwrap_or("remote");
+        let label = device.get("label").and_then(Value::as_str).unwrap_or("Paired device");
+        match app.state::<AppState>().devices.issue(kind, label) {
+            Ok(issued) => { let value = issued_response(&req, &cfg, issued); let _ = req.respond(json_response(value, 201)); }
+            Err(e) => { let _ = req.respond(json_response(json!({"error":e.to_string()}), 500)); }
+        } return;
+    }
+    if let Some(id) = path.strip_prefix("/api/access/devices/") {
+        if method != Method::Delete { let _ = req.respond(json_response(json!({"error":"method not allowed"}), 405)); return; }
+        if !local_request(&req) { let _ = req.respond(json_response(json!({"error":"paired devices can only be managed locally"}), 403)); return; }
+        match app.state::<AppState>().devices.revoke(id) {
+            Ok(true) => { let _ = req.respond(Response::empty(204)); }
+            Ok(false) => { let _ = req.respond(json_response(json!({"error":"paired device not found"}), 404)); }
+            Err(e) => { let _ = req.respond(json_response(json!({"error":e.to_string()}), 500)); }
+        } return;
     }
 
     let _ = match (method, path.as_str()) {
-        (_, "/api/events") if is_get => serve_events(events, stop, &url, req),
+        (_, "/api/events") if is_get => serve_events(app, events, stop, &url, req, &access),
 
         (_, "/api/settings") if is_get => {
             let value = serde_json::to_value(browser_settings(&req, &cfg)).unwrap_or(Value::Null);
             req.respond(json_response(value, 200))
         }
         (Method::Post, "/api/settings") => {
+            if !privileged(&req, &access) {
+                return void_respond(req, json_response(json!({"error":"settings can only be changed locally or with the admin token"}), 403));
+            }
             let body = read_body(&mut req);
             let incoming = body.get("settings").cloned().unwrap_or(body);
             match serde_json::from_value::<Settings>(incoming) {
-                Ok(new) => {
+                Ok(mut new) => {
+                    // HTTP settings receive redacted secrets; preserve their
+                    // existing values on a blank round-trip. Desktop IPC can
+                    // still intentionally clear them.
+                    if new.web_token.is_empty() { new.web_token = cfg.web_token.clone(); }
+                    if new.brain_api_key.is_empty() { new.brain_api_key = cfg.brain_api_key.clone(); }
+                    if new.speech_remote_api_key.is_empty() { new.speech_remote_api_key = cfg.speech_remote_api_key.clone(); }
+                    if new.hf_token.is_empty() { new.hf_token = cfg.hf_token.clone(); }
                     let web_changed = !cfg.web_config_eq(&new);
                     let out = (|| -> Result<(), String> {
                         new.save(app).map_err(|e| e.to_string())?;
@@ -543,6 +729,9 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
         }
         (Method::Post, p @ ("/api/models/download" | "/api/models/cancel" | "/api/models/remove"
             | "/api/models/forget")) => {
+            if !privileged(&req, &access) {
+                return void_respond(req, json_response(json!({"error":"models can only be changed locally or with the admin token"}), 403));
+            }
             let body = read_body(&mut req);
             let id = body.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
             let assets = &app.state::<AppState>().assets;
@@ -569,6 +758,9 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
             200,
         )),
         (Method::Post, "/api/backend/start") => {
+            if !privileged(&req, &access) {
+                return void_respond(req, json_response(json!({"error":"backend can only be controlled locally or with the admin token"}), 403));
+            }
             let st = app.state::<AppState>();
             let c = st.settings.lock().clone();
             match st.backend.start(app, &c) {
@@ -577,10 +769,16 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
             }
         }
         (Method::Post, "/api/backend/stop") => {
+            if !privileged(&req, &access) {
+                return void_respond(req, json_response(json!({"error":"backend can only be controlled locally or with the admin token"}), 403));
+            }
             app.state::<AppState>().backend.stop(app);
             req.respond(json_response(json!({ "ok": true }), 200))
         }
         (Method::Post, "/api/emit") => {
+            if !privileged(&req, &access) {
+                return void_respond(req, json_response(json!({"error":"events can only be emitted locally or with the admin token"}), 403));
+            }
             let body = read_body(&mut req);
             let event = body.get("event").and_then(Value::as_str).unwrap_or_default();
             if BRIDGED_EVENTS.contains(&event) {
@@ -598,13 +796,18 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
     };
 }
 
-fn serve_events(events: &Events, stop: &AtomicBool, url: &str, req: Request) -> io::Result<()> {
+fn serve_events(app: &AppHandle, events: &Events, stop: &AtomicBool, url: &str, req: Request, access: &Access) -> io::Result<()> {
     let since: u64 = query_param(url, "since")
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     let deadline = Instant::now() + LONGPOLL_MAX;
 
     loop {
+        if let Access::Device { token, id } = access {
+            if !app.state::<AppState>().devices.is_valid_for(token, id) {
+                return req.respond(json_response(json!({"error":"device credential is invalid or revoked", "code":"device_credential_invalid"}), 401));
+            }
+        }
         let (cursor, out): (u64, Vec<Value>) = {
             let log = events.lock();
             let out = log

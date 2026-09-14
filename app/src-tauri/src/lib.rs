@@ -2,6 +2,7 @@ mod assets;
 mod backend;
 mod brain;
 mod config;
+mod device_access;
 mod hotkey;
 mod localbrain;
 mod runtime;
@@ -28,6 +29,20 @@ pub struct AppState {
     web: WebServer,
     assets: AssetManager,
     brain_server: LocalBrain,
+    devices: device_access::DeviceRegistry,
+}
+
+#[tauri::command]
+fn paired_devices(state: State<'_, AppState>) -> Vec<device_access::Device> { state.devices.list() }
+
+#[tauri::command]
+fn issue_device(state: State<'_, AppState>, device_type: String, label: String) -> Result<device_access::IssuedCredential, String> {
+    state.devices.issue(&device_type, &label).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn revoke_device(state: State<'_, AppState>, id: String) -> Result<bool, String> {
+    state.devices.revoke(&id).map_err(|e| e.to_string())
 }
 
 // ── commands ───────────────────────────────────────────────────────────────
@@ -321,6 +336,9 @@ pub fn run() {
             show_settings,
             app_version,
             quit_app,
+            paired_devices,
+            issue_device,
+            revoke_device,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -332,12 +350,14 @@ pub fn run() {
             let web_enabled = settings.web_enabled;
             let setup_completed = settings.setup_completed;
             let local_brain = settings.brain_source == "local" && settings.delegation_enabled;
+            let devices = device_access::DeviceRegistry::load(&handle);
             app.manage(AppState {
                 settings: Mutex::new(settings),
                 backend: BackendManager::default(),
                 web: WebServer::default(),
                 assets: AssetManager::default(),
                 brain_server: LocalBrain::default(),
+                devices,
             });
 
             if let Err(e) = hotkey::apply(&handle, &hk) {
