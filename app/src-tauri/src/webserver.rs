@@ -553,6 +553,15 @@ fn realtime_proxy_url(req: &Request, cfg: &Settings) -> String {
         + "/api/realtime"
 }
 
+fn realtime_backend_url(cfg: &Settings) -> String {
+    let port = cfg
+        .launch_env
+        .get("HF_S2S_BACKEND_PORT")
+        .and_then(|value| value.trim().parse::<u16>().ok())
+        .unwrap_or(config::BACKEND_PORT);
+    format!("ws://127.0.0.1:{port}/v1/realtime")
+}
+
 fn browser_settings(req: &Request, cfg: &Settings) -> Settings {
     let mut out = cfg.clone();
     // Pairing credentials can configure the app, but may not mint more devices
@@ -893,7 +902,7 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
     };
 }
 
-fn proxy_realtime(app: &AppHandle, _cfg: &Settings, stop: &AtomicBool, req: Request, access: &Access) {
+fn proxy_realtime(app: &AppHandle, cfg: &Settings, stop: &AtomicBool, req: Request, access: &Access) {
     let Some(key) = req.headers().iter().find(|h| h.field.equiv("Sec-WebSocket-Key"))
         .map(|h| h.value.as_str().to_string()) else {
         void_respond(req, json_response(json!({"error":"websocket upgrade required"}), 426));
@@ -905,7 +914,10 @@ fn proxy_realtime(app: &AppHandle, _cfg: &Settings, stop: &AtomicBool, req: Requ
     let safe_protocols = offered_protocols.split(',').map(str::trim).filter(|value| {
         matches!(*value, "realtime" | "openai-insecure-api-key.open-voice-agent" | "openai-beta.realtime-v1")
     }).collect::<Vec<_>>();
-    let mut upstream_request = config::local_server_url().into_client_request().unwrap();
+    // The managed launcher supports port overrides for side-by-side/dev runs;
+    // the authenticated proxy must follow the same backend port rather than
+    // silently dialing the compiled default.
+    let mut upstream_request = realtime_backend_url(cfg).into_client_request().unwrap();
     if !safe_protocols.is_empty() {
         upstream_request.headers_mut().insert("Sec-WebSocket-Protocol", safe_protocols.join(", ").parse().unwrap());
     }
@@ -1029,7 +1041,7 @@ fn serve_static(path: &str, req: Request) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{form_param, host_of, pair_page, realtime_url, safe_next, tailscale_endpoint};
+    use super::{form_param, host_of, pair_page, realtime_backend_url, realtime_url, safe_next, tailscale_endpoint};
     use crate::config::Settings;
 
     fn tls_settings() -> Settings {
@@ -1067,6 +1079,7 @@ mod tests {
         let mut cfg = Settings::default();
         cfg.launch_env.insert("HF_S2S_BACKEND_PORT".into(), "9766".into());
         assert_eq!(realtime_url("host", &cfg), "ws://host:9766/v1/realtime");
+        assert_eq!(realtime_backend_url(&cfg), "ws://127.0.0.1:9766/v1/realtime");
     }
 
     /// A half-configured pair means the web server itself refuses to start with

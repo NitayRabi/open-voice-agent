@@ -2,15 +2,16 @@
 
 A remote-only Android client for an Open Voice Agent node. It does not bundle,
 download, or start a model or server. The app fetches the node's client settings
-with the pairing code, connects directly to its realtime speech WebSocket, and
-routes delegated tasks back through the node.
+by exchanging a one-time pairing code for a revocable device credential. Voice
+traffic uses the node's authenticated realtime proxy, and delegated tasks route
+back through the node to its configured ACP provider (OpenClaw by default).
 
 ## Use
 
 1. In the desktop app, enable **Settings → Web**, bind it to a reachable address,
    and set a pairing code. Use TLS when accessing it outside a trusted LAN.
 2. Enter that web URL (for example `https://voice.example.com`) and pairing code
-   in the Android app.
+   in the Android phone or Wear OS app. The code is not retained after pairing.
 3. Tap **Connect**, or enable the floating orb and tap it from any app.
 
 If the node uses the desktop app's generated/self-signed TLS certificate,
@@ -33,7 +34,15 @@ cd android-client
 ANDROID_HOME=/home/nitayrabi/android-sdk ./gradlew :app:assembleDebug
 ```
 
-The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+The phone APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+
+To build the Pixel Watch companion as well:
+
+```bash
+ANDROID_HOME=/home/nitayrabi/android-sdk ./gradlew :wear:assembleDebug
+```
+
+The Wear OS APK is written to `wear/build/outputs/apk/debug/wear-debug.apk`.
 
 For development against a LAN node, cleartext HTTP is enabled. Production
 deployments should use HTTPS/WSS with a certificate trusted by the phone.
