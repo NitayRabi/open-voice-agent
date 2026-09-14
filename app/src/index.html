@@ -337,6 +337,15 @@
           <span>TLS private key (PEM path)</span>
           <input id="web_tls_key" type="text" spellcheck="false" placeholder="(blank = plain HTTP)" />
         </label>
+        <label class="check">
+          <input id="web_tailscale" type="checkbox" />
+          <span>Publish privately with Tailscale Serve</span>
+        </label>
+        <label>
+          <span>Tailscale executable (optional)</span>
+          <input id="web_tailscale_binary" type="text" spellcheck="false" placeholder="auto — tailscale on PATH" />
+          <small>The app owns a foreground Serve claim, verifies it in <code>tailscale serve status --json</code>, and tears it down on stop.</small>
+        </label>
         <div class="row">
           <button id="web_open" type="button" class="secondary">Open web UI</button>
           <span id="web_state" class="muted">stopped</span>

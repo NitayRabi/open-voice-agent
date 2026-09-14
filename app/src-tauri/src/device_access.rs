@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::PathBuf;
+use std::collections::HashMap;
+use std::sync::{Arc, Weak};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Manager};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -43,6 +46,7 @@ struct Store {
 pub struct DeviceRegistry {
     path: PathBuf,
     records: Mutex<Vec<DeviceRecord>>,
+    sessions: Mutex<HashMap<String, Vec<Weak<AtomicBool>>>>,
 }
 
 impl DeviceRegistry {
@@ -64,6 +68,7 @@ impl DeviceRegistry {
         Self {
             path,
             records: Mutex::new(records),
+            sessions: Mutex::new(HashMap::new()),
         }
     }
 
@@ -130,7 +135,23 @@ impl DeviceRegistry {
             return Ok(false);
         }
         self.persist(&records)?;
+        if let Some(sessions) = self.sessions.lock().remove(id) {
+            for session in sessions.into_iter().filter_map(|flag| flag.upgrade()) {
+                session.store(true, Ordering::Release);
+            }
+        }
         Ok(true)
+    }
+
+    /// Register a live connection. Revocation flips every returned flag for
+    /// this device; dead weak references are pruned opportunistically.
+    pub fn session_flag(&self, id: &str) -> Arc<AtomicBool> {
+        let flag = Arc::new(AtomicBool::new(false));
+        let mut sessions = self.sessions.lock();
+        let entries = sessions.entry(id.to_string()).or_default();
+        entries.retain(|entry| entry.strong_count() > 0);
+        entries.push(Arc::downgrade(&flag));
+        flag
     }
 
     fn persist(&self, records: &[DeviceRecord]) -> Result<()> {
@@ -208,7 +229,11 @@ mod tests {
         let registry = DeviceRegistry::test_at(path.clone());
         let watch = registry.issue("wear", "Watch").unwrap();
         let phone = registry.issue("android", "Phone").unwrap();
+        let live_watch = registry.session_flag(&watch.device.id);
+        let live_phone = registry.session_flag(&phone.device.id);
         assert!(registry.revoke(&watch.device.id).unwrap());
+        assert!(live_watch.load(std::sync::atomic::Ordering::Acquire));
+        assert!(!live_phone.load(std::sync::atomic::Ordering::Acquire));
         assert_eq!(registry.authenticate(&watch.access_token), None);
         assert!(registry.authenticate(&phone.access_token).is_some());
         assert!(!registry.revoke("missing").unwrap());

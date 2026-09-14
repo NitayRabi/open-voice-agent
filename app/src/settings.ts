@@ -51,6 +51,8 @@ const FIELDS = {
   web_token: "value",
   web_tls_cert: "value",
   web_tls_key: "value",
+  web_tailscale: "checked",
+  web_tailscale_binary: "value",
 } as const satisfies Partial<Record<keyof Settings, FieldKind>>;
 
 type FieldId = keyof typeof FIELDS;

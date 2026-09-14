@@ -88,6 +88,8 @@ export interface Settings {
   web_token: string;
   web_tls_cert: string;
   web_tls_key: string;
+  web_tailscale: boolean;
+  web_tailscale_binary: string;
 }
 
 /** Progress of an in-flight download, as reported by `models_list`. */

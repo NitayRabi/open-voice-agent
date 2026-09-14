@@ -11,12 +11,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+use std::process::{Child, Command, Stdio};
+use std::io::BufRead;
 
 use include_dir::{include_dir, Dir};
 use parking_lot::Mutex;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Listener, Manager};
 use tiny_http::{Header, Method, Request, Response, Server};
+use tungstenite::client::IntoClientRequest;
+use tungstenite::protocol::{Message, Role};
 
 use crate::brain;
 use crate::config::{self, Settings};
@@ -68,6 +72,7 @@ struct Running {
     handle: Option<JoinHandle<()>>,
     listeners: Vec<tauri::EventId>,
     url: String,
+    tailscale: Option<Child>,
 }
 
 impl WebServer {
@@ -150,11 +155,23 @@ impl WebServer {
             })
             .map_err(|e| e.to_string())?;
 
+        let (tailscale, published_url) = if cfg.web_tailscale {
+            let target = format!("http://127.0.0.1:{}", cfg.web_port);
+            match start_tailscale(&cfg, &target) {
+                Ok(value) => (Some(value.0), Some(value.1)),
+                Err(error) => {
+                    let _ = app.emit("backend-log", format!("[tailscale] {error}"));
+                    (None, None)
+                }
+            }
+        } else { (None, None) };
+        let url = published_url.unwrap_or(url);
         *self.inner.lock() = Some(Running {
             stop,
             handle: Some(handle),
             listeners,
             url: url.clone(),
+            tailscale,
         });
         let _ = app.emit("web-status", true);
         Ok(url)
@@ -163,6 +180,10 @@ impl WebServer {
     pub fn stop(&self, app: &AppHandle) {
         if let Some(mut r) = self.inner.lock().take() {
             r.stop.store(true, Ordering::Relaxed);
+            if let Some(mut child) = r.tailscale.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
             for id in r.listeners.drain(..) {
                 app.unlisten(id);
             }
@@ -186,6 +207,69 @@ fn tls_config(cfg: &Settings) -> Result<Option<TlsPem>, String> {
         }
         _ => Err("set both web_tls_cert and web_tls_key, or neither".into()),
     }
+}
+
+fn tailscale_binary(cfg: &Settings) -> String {
+    if !cfg.web_tailscale_binary.trim().is_empty() {
+        return cfg.web_tailscale_binary.trim().to_string();
+    }
+    if let Ok(value) = std::env::var("OVA_TAILSCALE_BINARY") {
+        if !value.trim().is_empty() { return value; }
+    }
+    #[cfg(target_os = "macos")]
+    if std::path::Path::new("/Applications/Tailscale.app/Contents/MacOS/Tailscale").is_file() {
+        return "/Applications/Tailscale.app/Contents/MacOS/Tailscale".into();
+    }
+    "tailscale".into()
+}
+
+fn tailscale_endpoint(line: &str) -> Option<String> {
+    let value = line.trim().trim_end_matches('/');
+    let host = value.strip_prefix("https://")?;
+    if !host.contains('/') && host.ends_with(".ts.net") { Some(value.to_string()) } else { None }
+}
+
+/// Start a foreground Serve claim, and report it only after structured status
+/// contains both the candidate tailnet host and our exact loopback target.
+fn start_tailscale(cfg: &Settings, target: &str) -> Result<(Child, String), String> {
+    let binary = tailscale_binary(cfg);
+    let mut child = Command::new(&binary)
+        .args(["serve", "--yes", target])
+        .stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()
+        .map_err(|e| format!("could not start {binary}: {e}"))?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    for pipe in [child.stdout.take().map(|p| Box::new(p) as Box<dyn io::Read + Send>),
+                 child.stderr.take().map(|p| Box::new(p) as Box<dyn io::Read + Send>)]
+        .into_iter().flatten()
+    {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            for line in io::BufReader::new(pipe).lines().map_while(|line| line.ok()) { let _ = tx.send(line); }
+        });
+    }
+    drop(tx);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut candidate = None;
+    while Instant::now() < deadline {
+        if let Ok(line) = rx.recv_timeout(Duration::from_millis(400)) {
+            if let Some(endpoint) = tailscale_endpoint(&line) { candidate = Some(endpoint); }
+        }
+        if let Some(endpoint) = candidate.as_ref() {
+            if let Ok(output) = Command::new(&binary).args(["serve", "status", "--json"]).output() {
+                let status = String::from_utf8_lossy(&output.stdout);
+                let host = endpoint.trim_start_matches("https://");
+                if output.status.success() && serde_json::from_slice::<Value>(&output.stdout).is_ok()
+                    && status.contains(host) && status.contains(target) {
+                    return Ok((child, endpoint.clone()));
+                }
+            }
+        }
+        if child.try_wait().ok().flatten().is_some() {
+            return Err("tailscale serve exited before becoming ready".into());
+        }
+    }
+    let _ = child.kill(); let _ = child.wait();
+    Err("tailscale serve did not become ready within 30 seconds".into())
 }
 
 // ── request handling ───────────────────────────────────────────────────────
@@ -237,7 +321,7 @@ fn query_param(url: &str, key: &str) -> Option<String> {
 #[derive(Clone)]
 enum Access {
     Unauthenticated,
-    Admin,
+    Admin { token: String },
     Device { token: String, id: String },
 }
 
@@ -259,13 +343,13 @@ fn presented_token(req: &Request) -> Option<String> {
 fn authorize(req: &Request, app: &AppHandle, configured_token: &str) -> Option<Access> {
     if configured_token.is_empty() { return Some(Access::Unauthenticated); }
     let token = presented_token(req)?;
-    if token == configured_token { return Some(Access::Admin); }
+    if token == configured_token { return Some(Access::Admin { token }); }
     app.state::<AppState>().devices.authenticate(&token)
         .map(|id| Access::Device { token, id })
 }
 
 fn privileged(req: &Request, access: &Access) -> bool {
-    local_request(req) || matches!(access, Access::Admin)
+    local_request(req) || matches!(access, Access::Admin { .. })
 }
 
 fn local_request(req: &Request) -> bool {
@@ -462,6 +546,13 @@ fn realtime_url(host: &str, cfg: &Settings) -> String {
     }
 }
 
+fn realtime_proxy_url(req: &Request, cfg: &Settings) -> String {
+    public_origin(req, cfg)
+        .replacen("https://", "wss://", 1)
+        .replacen("http://", "ws://", 1)
+        + "/api/realtime"
+}
+
 fn browser_settings(req: &Request, cfg: &Settings) -> Settings {
     let mut out = cfg.clone();
     // Pairing credentials can configure the app, but may not mint more devices
@@ -476,14 +567,7 @@ fn browser_settings(req: &Request, cfg: &Settings) -> Settings {
             value.clear();
         }
     }
-    let raw_host = req
-        .headers()
-        .iter()
-        .find(|h| h.field.equiv("Host"))
-        .map(|h| h.value.as_str())
-        .unwrap_or("127.0.0.1");
-    let host = host_of(raw_host);
-    out.server_url = realtime_url(&host, cfg);
+    out.server_url = realtime_proxy_url(req, cfg);
     out
 }
 
@@ -492,7 +576,8 @@ const CAPABILITIES: &[&str] = &[
     "access.device-credentials-v1",
     "access.fragment-session-v1",
     "access.per-device-revocation-v1",
-    "realtime.openai-direct-v1",
+    "realtime.authenticated-proxy-v1",
+    "realtime.live-revocation-v1",
 ];
 
 fn public_origin(req: &Request, cfg: &Settings) -> String {
@@ -514,14 +599,13 @@ fn allowed_pairing_origin(req: &Request, cfg: &Settings) -> bool {
 
 fn issued_response(req: &Request, cfg: &Settings, issued: crate::device_access::IssuedCredential) -> Value {
     let origin = public_origin(req, cfg);
-    let host = host_of(req.headers().iter().find(|h| h.field.equiv("Host")).map(|h| h.value.as_str()).unwrap_or("127.0.0.1"));
     json!({
         "access_token": issued.access_token,
         "token_type": issued.token_type,
         "device": issued.device,
         "base_url": origin,
         "connection_url": format!("{origin}/c#{}", issued.access_token),
-        "realtime_url": realtime_url(&host, cfg),
+        "realtime_url": realtime_proxy_url(req, cfg),
         "protocol_version": PROTOCOL_VERSION,
         "capabilities": CAPABILITIES,
     })
@@ -541,7 +625,7 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": CAPABILITIES,
             "paired_devices": app.state::<AppState>().devices.list().len(),
-            "realtime_auth": "direct-backend-unenforced",
+            "realtime_auth": "device-credential",
         });
         let _ = req.respond(json_response(value, 200));
         return;
@@ -615,11 +699,24 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
         let result = if is_get && !path.starts_with("/api/") {
             serve_pair(req, &path, false)
         } else {
-            req.respond(json_response(json!({ "error": "unauthorized" }), 401))
+            let supplied = presented_token(&req).is_some();
+            req.respond(json_response(
+                if supplied {
+                    json!({ "error": "device credential is invalid or revoked", "code": "device_credential_invalid" })
+                } else {
+                    json!({ "error": "authentication required", "code": "access_required" })
+                },
+                401,
+            ))
         };
         let _ = result;
         return;
     };
+
+    if path == "/api/realtime" && is_get {
+        proxy_realtime(app, &cfg, stop, req, &access);
+        return;
+    }
 
     if path == "/api/access/devices" && is_get {
         let status = if local_request(&req) { 200 } else { 403 };
@@ -796,6 +893,77 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
     };
 }
 
+fn proxy_realtime(app: &AppHandle, _cfg: &Settings, stop: &AtomicBool, req: Request, access: &Access) {
+    let Some(key) = req.headers().iter().find(|h| h.field.equiv("Sec-WebSocket-Key"))
+        .map(|h| h.value.as_str().to_string()) else {
+        void_respond(req, json_response(json!({"error":"websocket upgrade required"}), 426));
+        return;
+    };
+
+    let offered_protocols = req.headers().iter().find(|h| h.field.equiv("Sec-WebSocket-Protocol"))
+        .map(|h| h.value.as_str()).unwrap_or("");
+    let safe_protocols = offered_protocols.split(',').map(str::trim).filter(|value| {
+        matches!(*value, "realtime" | "openai-insecure-api-key.open-voice-agent" | "openai-beta.realtime-v1")
+    }).collect::<Vec<_>>();
+    let mut upstream_request = config::local_server_url().into_client_request().unwrap();
+    if !safe_protocols.is_empty() {
+        upstream_request.headers_mut().insert("Sec-WebSocket-Protocol", safe_protocols.join(", ").parse().unwrap());
+    }
+    let Ok((mut upstream, _)) = tungstenite::connect(upstream_request) else {
+        void_respond(req, json_response(json!({"error":"speech backend unavailable"}), 502));
+        return;
+    };
+    if let tungstenite::stream::MaybeTlsStream::Plain(stream) = upstream.get_mut() {
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(2)));
+    }
+
+    let mut response = Response::empty(101);
+    response.add_header(header("Sec-WebSocket-Accept", &tungstenite::handshake::derive_accept_key(key.as_bytes())));
+    // Select only a protocol the client offered. Native clients using an
+    // Authorization header do not need to offer any subprotocol.
+    if safe_protocols.contains(&"realtime") {
+        response.add_header(header("Sec-WebSocket-Protocol", "realtime"));
+    }
+    let stream = req.upgrade("websocket", response);
+    let mut client = tungstenite::WebSocket::from_raw_socket(stream, Role::Server, None);
+    let revoked = match access {
+        Access::Device { id, .. } => Some(app.state::<AppState>().devices.session_flag(id)),
+        _ => None,
+    };
+    let admin_token = match access { Access::Admin { token } => Some(token.clone()), _ => None };
+
+    loop {
+        let admin_revoked = admin_token.as_ref().is_some_and(|token| {
+            app.state::<AppState>().settings.lock().web_token != *token
+        });
+        if stop.load(Ordering::Acquire)
+            || admin_revoked
+            || revoked.as_ref().is_some_and(|flag| flag.load(Ordering::Acquire)) {
+            let _ = client.close(None);
+            break;
+        }
+        let incoming = match client.read() {
+            Ok(message) => message,
+            Err(_) => break,
+        };
+        let closing = matches!(incoming, Message::Close(_));
+        if upstream.send(incoming).is_err() { break; }
+
+        loop {
+            match upstream.read() {
+                Ok(message) => {
+                    let closing = matches!(message, Message::Close(_));
+                    if client.send(message).is_err() || closing { return; }
+                }
+                Err(tungstenite::Error::Io(error))
+                    if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => break,
+                Err(_) => return,
+            }
+        }
+        if closing { break; }
+    }
+}
+
 fn serve_events(app: &AppHandle, events: &Events, stop: &AtomicBool, url: &str, req: Request, access: &Access) -> io::Result<()> {
     let since: u64 = query_param(url, "since")
         .and_then(|s| s.parse().ok())
@@ -861,7 +1029,7 @@ fn serve_static(path: &str, req: Request) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{form_param, host_of, pair_page, realtime_url, safe_next};
+    use super::{form_param, host_of, pair_page, realtime_url, safe_next, tailscale_endpoint};
     use crate::config::Settings;
 
     fn tls_settings() -> Settings {
@@ -932,5 +1100,13 @@ mod tests {
         let html = pair_page("/settings?x=\"<", false);
         assert!(html.contains("value=\"/settings?x=&quot;&lt;\""));
         assert!(!html.contains("value=\"/settings?x=\"<\""));
+    }
+
+    #[test]
+    fn accepts_only_private_https_tailscale_endpoint_lines() {
+        assert_eq!(tailscale_endpoint(" https://voice.tail123.ts.net/ ").as_deref(), Some("https://voice.tail123.ts.net"));
+        assert_eq!(tailscale_endpoint("https://example.com"), None);
+        assert_eq!(tailscale_endpoint("Visit https://voice.tail123.ts.net"), None);
+        assert_eq!(tailscale_endpoint("http://voice.tail123.ts.net"), None);
     }
 }

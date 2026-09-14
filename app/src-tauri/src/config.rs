@@ -254,6 +254,13 @@ pub struct Settings {
     pub web_tls_cert: String,
     #[serde(default)]
     pub web_tls_key: String,
+    /// Publish the complete HTTP + authenticated realtime origin privately via
+    /// a foreground `tailscale serve` process owned by the app.
+    #[serde(default)]
+    pub web_tailscale: bool,
+    /// Optional Tailscale CLI override (useful for the macOS app bundle).
+    #[serde(default)]
+    pub web_tailscale_binary: String,
 }
 
 impl Default for Settings {
@@ -313,6 +320,8 @@ impl Settings {
             && self.speech_remote_api_key == o.speech_remote_api_key
             && self.web_tls_cert == o.web_tls_cert
             && self.web_tls_key == o.web_tls_key
+            && self.web_tailscale == o.web_tailscale
+            && self.web_tailscale_binary == o.web_tailscale_binary
     }
 
     /// True when nothing that affects the embedded web server has changed.
