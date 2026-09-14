@@ -22,6 +22,11 @@ data class NodeSettings(
     val speakDelegatedResult: Boolean,
 )
 
+data class PairedNodeCredential(
+    val accessToken: String,
+    val deviceId: String,
+)
+
 class NodeClient(private val baseUrl: String, private val pairingCode: String, trustSelfSigned: Boolean = false) {
     val http: OkHttpClient = if (trustSelfSigned) insecureClient() else sharedHttp
 
@@ -40,6 +45,32 @@ class NodeClient(private val baseUrl: String, private val pairingCode: String, t
             val context = SSLContext.getInstance("TLS").apply { init(null, arrayOf<TrustManager>(trust), SecureRandom()) }
             return OkHttpClient.Builder().sslSocketFactory(context.socketFactory, trust).hostnameVerifier { _, _ -> true }.build()
         }
+    }
+
+    /** Exchange the reusable desktop pairing code for this phone's revocable credential. */
+    fun pair(code: String, label: String, callback: (Result<PairedNodeCredential>) -> Unit) {
+        val json = JSONObject()
+            .put("code", code.trim())
+            .put("device", JSONObject().put("type", "android").put("label", label))
+            .toString()
+        http.newCall(request("/api/access/pair", "POST", json)).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) = callback(Result.failure(e))
+            override fun onResponse(call: Call, response: Response) = response.use {
+                val raw = it.body?.string().orEmpty()
+                if (!it.isSuccessful) {
+                    val detail = runCatching { JSONObject(raw).optString("error") }.getOrDefault("")
+                    callback(Result.failure(IOException(detail.ifBlank { "Pairing returned ${it.code}" })))
+                    return@use
+                }
+                callback(runCatching {
+                    val body = JSONObject(raw)
+                    PairedNodeCredential(
+                        accessToken = body.getString("access_token"),
+                        deviceId = body.getJSONObject("device").getString("id"),
+                    )
+                })
+            }
+        })
     }
 
     private fun request(path: String, method: String = "GET", json: String? = null): Request {

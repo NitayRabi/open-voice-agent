@@ -44,11 +44,10 @@ class VoiceService : Service() {
 
     private fun toggle() {
         if (session != null) { session?.stop(); session = null; return }
-        val prefs = getSharedPreferences("node", MODE_PRIVATE)
-        val url = prefs.getString("url", "").orEmpty(); val code = prefs.getString("code", "").orEmpty()
-        if (url.isBlank()) return update("error", "Open the app and pair with a node first")
+        val saved = SecureNodeStore(this).load()
+            ?: return update("error", "Open the app and pair with a node first")
         update("connecting", null)
-        val node = NodeClient(url, code, prefs.getBoolean("trust_self_signed", false))
+        val node = NodeClient(saved.url, saved.credential, saved.trustSelfSigned)
         node.settings { result -> result.fold(
             { cfg -> session = VoiceSession(this, node, cfg, ::update).also { it.start() } },
             { update("error", it.message) },

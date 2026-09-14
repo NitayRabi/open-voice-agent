@@ -22,6 +22,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var status: TextView
     private lateinit var orb: OrbView
     private lateinit var trustSelfSigned: CheckBox
+    private lateinit var store: SecureNodeStore
     private var enableOverlayAfterPermission = false
 
     private val receiver = object : BroadcastReceiver() {
@@ -34,15 +35,16 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = Color.rgb(9, 11, 18)
-        val prefs = getSharedPreferences("node", MODE_PRIVATE)
-        url = field("Node URL", prefs.getString("url", "").orEmpty())
-        code = field("Pairing code", prefs.getString("code", "").orEmpty()).apply { inputType = 0x81 }
+        store = SecureNodeStore(this)
+        val saved = store.load()
+        url = field("Node URL", saved?.url.orEmpty())
+        code = field("Pairing code (blank when already paired)", "").apply { inputType = 0x81 }
         trustSelfSigned = CheckBox(this).apply {
             text = "Trust this node's self-signed certificate"
             setTextColor(Color.rgb(190,198,216))
-            isChecked = prefs.getBoolean("trust_self_signed", false)
+            isChecked = saved?.trustSelfSigned ?: false
         }
-        status = TextView(this).apply { text = "Pair with your remote node"; setTextColor(Color.rgb(174,184,202)); textSize = 15f; gravity = Gravity.CENTER }
+        status = TextView(this).apply { text = if (saved == null) "Pair with your remote node" else "Paired — tap to talk"; setTextColor(Color.rgb(174,184,202)); textSize = 15f; gravity = Gravity.CENTER }
         orb = OrbView(this).apply { layoutParams = LinearLayout.LayoutParams(dp(190), dp(190)).also { it.gravity = Gravity.CENTER_HORIZONTAL }; setOnClickListener { startVoice(false) } }
         val connect = Button(this).apply { text = "Connect"; setOnClickListener { startVoice(false) } }
         val floating = Button(this).apply { text = "Enable floating orb"; setOnClickListener { startVoice(true) } }
@@ -65,7 +67,31 @@ class MainActivity : AppCompatActivity() {
     private fun startVoice(withOverlay: Boolean) {
         val cleanUrl = url.text.toString().trim().trimEnd('/')
         if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) { status.text = "Enter an http:// or https:// node URL"; return }
-        getSharedPreferences("node", MODE_PRIVATE).edit().putString("url", cleanUrl).putString("code", code.text.toString().trim()).putBoolean("trust_self_signed", trustSelfSigned.isChecked).apply()
+        val enteredCode = code.text.toString().trim()
+        val saved = store.load()?.takeIf { it.url == cleanUrl && it.trustSelfSigned == trustSelfSigned.isChecked }
+        if (enteredCode.isNotEmpty()) {
+            status.text = "Pairing this phone…"
+            val client = NodeClient(cleanUrl, "", trustSelfSigned.isChecked)
+            client.pair(enteredCode, "${Build.MANUFACTURER} ${Build.MODEL}".trim()) { result ->
+                runOnUiThread {
+                    result.fold(
+                        onSuccess = {
+                            store.save(SavedNode(cleanUrl, it.accessToken, it.deviceId, trustSelfSigned.isChecked))
+                            code.setText("")
+                            status.text = "Paired"
+                            launchVoice(withOverlay)
+                        },
+                        onFailure = { status.text = it.message ?: "Pairing failed" },
+                    )
+                }
+            }
+            return
+        }
+        if (saved == null) { status.text = "Enter the pairing code shown by the desktop app"; return }
+        launchVoice(withOverlay)
+    }
+
+    private fun launchVoice(withOverlay: Boolean) {
         if (withOverlay && !Settings.canDrawOverlays(this)) {
             enableOverlayAfterPermission = true
             showOverlayHelp(); return

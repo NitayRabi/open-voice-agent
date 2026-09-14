@@ -78,10 +78,19 @@ class VoiceSession(
     }.apply { name = "ova-microphone"; start() }
 
     private fun sessionUpdate(): JSONObject {
-        val input = JSONObject().put("format", JSONObject().put("type", "audio/pcm").put("rate", settings.sampleRate))
+        // OpenAI's Realtime schema only accepts an explicitly declared PCM
+        // rate of 24 kHz. Our local cascade is natively 16 kHz and selects that
+        // rate when `format` is omitted; declaring audio/pcm at 16 kHz causes
+        // the server to reject the entire session.update.
+        val input = JSONObject()
             .put("transcription", JSONObject().put("model", "whisper-1"))
             .put("turn_detection", JSONObject().put("type", "server_vad").put("interrupt_response", true))
-        val output = JSONObject().put("format", JSONObject().put("type", "audio/pcm").put("rate", settings.sampleRate)).put("voice", settings.voice).put("speed", 1)
+        val output = JSONObject().put("voice", settings.voice).put("speed", 1)
+        if (settings.sampleRate != 16000) {
+            val format = JSONObject().put("type", "audio/pcm").put("rate", settings.sampleRate)
+            input.put("format", format)
+            output.put("format", JSONObject(format.toString()))
+        }
         val session = JSONObject().put("type", "realtime").put("output_modalities", JSONArray().put("audio"))
             .put("instructions", settings.instructions).put("audio", JSONObject().put("input", input).put("output", output))
         if (settings.delegationEnabled) {
