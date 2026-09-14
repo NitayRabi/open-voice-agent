@@ -47,6 +47,13 @@ organised and are large:
 
 Override with `VC_BIN` / `VC_MODELS` if either moves.
 
+## Android client
+
+`android-client/` is a remote-only native client: pair it with the desktop
+node's web URL and pairing code, then tap to talk. It never starts a local
+server or model. An optional draggable foreground orb can sit over other apps
+for one-tap voice access. See [`android-client/README.md`](android-client/README.md).
+
 ## Async tool calls
 
 The web stack follows the separation used by Codex realtime voice: VoiceChat is
