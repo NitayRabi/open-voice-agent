@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Open Voice</string>
+    <string name="trust_self_signed">Trust self-signed TLS</string>
+</resources>
