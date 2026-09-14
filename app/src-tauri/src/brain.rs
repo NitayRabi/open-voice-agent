@@ -1,7 +1,6 @@
-//! Delegation to the "brain": a single more-capable model, reached over an
-//! OpenAI-compatible `/chat/completions`. Either a remote endpoint the user
-//! configures, or a local `llama-server` the app runs on a downloaded GGUF
-//! (see `localbrain.rs`). No MCP, no ACP, no sub-agents: one HTTP call.
+//! Delegation to the "brain": a provider-neutral ACP registry when present,
+//! or a single model reached over an OpenAI-compatible
+//! `/chat/completions` endpoint as a backwards-compatible fallback.
 
 use std::time::Duration;
 
@@ -11,6 +10,9 @@ use tauri::{AppHandle, Manager};
 
 use crate::config::Settings;
 use crate::AppState;
+
+#[path = "acp.rs"]
+mod acp;
 
 const MAX_SPOKEN_CHARS: usize = 600;
 
@@ -57,6 +59,9 @@ pub fn delegate(app: &AppHandle, cfg: &Settings, request: &str) -> Result<String
     let request = request.trim();
     if request.is_empty() {
         bail!("empty delegation request");
+    }
+    if acp::configured() {
+        return acp::delegate(request, None).map(|answer| squash(&answer));
     }
     let target = resolve_target(app, cfg)?;
     let url = format!("{}/chat/completions", target.base);

@@ -1,0 +1,22 @@
+{
+  "defaultAgent": "openclaw",
+  "agents": {
+    "openclaw": {
+      "displayName": "Milo",
+      "aliases": [
+        "OpenClaw",
+        "claw"
+      ],
+      "guidance": "Use Milo for personal automation, messaging, reminders, smart-home actions, and tasks handled by the OpenClaw Gateway.",
+      "command": "openclaw",
+      "args": [
+        "acp",
+        "--session",
+        "agent:main:main"
+      ],
+      "cwd": "..",
+      "timeoutSeconds": 180.0,
+      "env": {}
+    }
+  }
+}

@@ -65,6 +65,57 @@ going while it runs.
       run-comparison.sh   launch it standalone: ws://127.0.0.1:8766/v1/realtime
       setup-macos.sh      one-time Python/MLX runtime prep for Apple Silicon
 
+## Provider-neutral agent delegation
+
+The supported standalone cascade can hand longer work to any Agent Client
+Protocol (ACP) process without putting an agent harness on the audio hot path:
+
+```text
+microphone → Parakeet-TDT → Gemma E4B → Qwen3-TTS → speaker
+                              │
+                              └─ delegate_to_agent → ACP facade → provider
+```
+
+Run it with `./run.sh`, then open `http://localhost:9000/`. The tracked proxy
+keeps ACP processes and sessions outside the speech server, starts delegations
+as background jobs, shows their queued/running/succeeded/failed state, and
+injects the final result into the live conversation so Gemma can speak it.
+
+Providers are configured in [`hf-s2s/agents.json`](hf-s2s/agents.json) and can
+also be managed in **Settings → ACP providers**. Each provider has a command,
+arguments, working directory, timeout, optional environment, display name,
+aliases, and routing guidance. The voice tool itself remains the generic
+`delegate_to_agent({ task, agent? })`; it does not encode an OpenClaw- or
+Codex-specific contract. Environment values are persisted locally with
+owner-only permissions and the management API exposes only their names.
+
+The default provider is the local OpenClaw Gateway agent “Milo”:
+
+```bash
+openclaw gateway status
+openclaw acp --session agent:main:main
+```
+
+For a remote Gateway, edit the provider arguments to include `--url` plus
+`--token-file` (preferred over putting a token directly in the registry).
+OpenClaw must be available on `PATH` for the process that launches the voice
+stack. Other ACP agents can be added alongside it and selected by ID, display
+name, or alias.
+
+ACP execution and provider mutation on the standalone proxy are loopback-only.
+Phones, watches, and other LAN clients use the paired Tauri node, whose
+authenticated `/api/delegate` route resolves the same default provider
+registry. This keeps remote realtime access and OpenClaw execution behind the
+node's pairing and per-device revocation boundary.
+
+Validate the integration without loading the speech models:
+
+```bash
+python3 -m unittest discover -s hf-s2s/tests -v
+python3 -m py_compile hf-s2s/*.py
+bash -n run.sh hf-s2s/run-comparison.sh
+```
+
 Apple Silicon Macs run the same pipeline on native backends — Parakeet and
 Qwen3-TTS on MLX/MPS, the conversational GGUF in llama.cpp on Metal. Run
 `bash hf-s2s/setup-macos.sh` before building the ARM64 app; full instructions

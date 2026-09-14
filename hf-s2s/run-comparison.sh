@@ -3,11 +3,26 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-UPSTREAM="$ROOT/.tmp/speech-to-speech"
+SHARED_ROOT="$ROOT"
+if [[ ! -d "$SHARED_ROOT/.tmp/speech-to-speech" ]]; then
+  COMMON_GIT_DIR="$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null || true)"
+  if [[ -n "$COMMON_GIT_DIR" && "$COMMON_GIT_DIR" != /* ]]; then
+    COMMON_GIT_DIR="$ROOT/$COMMON_GIT_DIR"
+  fi
+  SHARED_ROOT="$(dirname "$COMMON_GIT_DIR")"
+fi
+UPSTREAM="${HF_S2S_UPSTREAM:-$SHARED_ROOT/.tmp/speech-to-speech}"
 VENV="$UPSTREAM/.venv"
 PLATFORM="$(uname -s)"
 ARCH="$(uname -m)"
-SSL_DIR="${SSL_DIR:-$ROOT/hf-s2s/ssl}"
+if [[ -d "$ROOT/hf-s2s/ssl" ]]; then
+  default_ssl_dir="$ROOT/hf-s2s/ssl"
+else
+  # Existing development certificates live in the primary checkout. Worktrees
+  # reuse them without copying private key material into each checkout.
+  default_ssl_dir="$SHARED_ROOT/personaplex/ssl"
+fi
+SSL_DIR="${SSL_DIR:-$default_ssl_dir}"
 # The desktop app overrides these with the exact cert and key it serves the
 # web UI with, so the page and the wss endpoint present one identity and a
 # browser only has to trust a certificate once. Standalone, they fall back to
@@ -45,7 +60,7 @@ LLM_BASE_URL="${HF_S2S_LLM_BASE_URL:-}"
 LLM_NAME="${HF_S2S_LLM_NAME:-local-conversation}"
 LLM_API_KEY="${HF_S2S_LLM_API_KEY:-}"
 TTS_MODEL="${HF_S2S_TTS_MODEL:-Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice}"
-TTS_HIP_BIN="${HF_S2S_TTS_HIP_BIN:-$ROOT/.tmp/qwen3-tts-hip/target/release/tts-server}"
+TTS_HIP_BIN="${HF_S2S_TTS_HIP_BIN:-$SHARED_ROOT/.tmp/qwen3-tts-hip/target/release/tts-server}"
 TTS_HIP_MODEL_DIR="${HF_S2S_TTS_HIP_MODEL_DIR:-/home/nitayrabi/.cache/huggingface/hub/models--Qwen--Qwen3-TTS-12Hz-0.6B-CustomVoice/snapshots/85e237c12c027371202489a0ec509ded67b5e4b5}"
 TTS_HIP_PORT="${HF_S2S_TTS_HIP_PORT:-8021}"
 
@@ -119,7 +134,7 @@ if [[ "$PLATFORM" == "Darwin" ]]; then
     --qwen3_tts_speaker Aiden \
     --qwen3_tts_language auto \
     --stream_batch_sentences 1 \
-    --init_chat_prompt "You are a natural, concise voice assistant. Speak conversationally. Use an available tool whenever it is needed, then briefly tell the user the result." &
+    --init_chat_prompt "You are a natural, concise voice assistant. Speak conversationally. Use delegate_to_agent for longer, agentic, coding, computer, or personal-automation tasks. When delegation starts, immediately say which agent started and that you will report back; never imply it already finished. When a delegation status update arrives, always speak its success or failure and briefly report the result. Do not delegate a status notification again." &
 else
   LD_LIBRARY_PATH="/lib64:${LD_LIBRARY_PATH:-}" \
     "$TTS_HIP_BIN" "$TTS_HIP_MODEL_DIR" "127.0.0.1:${TTS_HIP_PORT}" 240 &
@@ -156,7 +171,7 @@ else
     --qwen3_tts_language auto \
     --qwen3_tts_parity_mode True \
     --stream_batch_sentences 1 \
-    --init_chat_prompt "You are a natural, concise voice assistant. Speak conversationally. Use an available tool whenever it is needed, then briefly tell the user the result." &
+    --init_chat_prompt "You are a natural, concise voice assistant. Speak conversationally. Use delegate_to_agent for longer, agentic, coding, computer, or personal-automation tasks. When delegation starts, immediately say which agent started and that you will report back; never imply it already finished. When a delegation status update arrives, always speak its success or failure and briefly report the result. Do not delegate a status notification again." &
 fi
 backend_pid="$!"
 children+=("$backend_pid")
@@ -195,10 +210,12 @@ fi
 
 # Same-machine endpoint: localhost is a browser secure context, so microphone
 # access works without accepting a development certificate.
-SPEECH_TO_SPEECH_URL="ws://localhost:${BACKEND_PORT}/v1/realtime" \
+SPEECH_TO_SPEECH_URL="/v1/realtime" \
+OPEN_VOICE_REALTIME_UPSTREAM="ws://127.0.0.1:${BACKEND_PORT}/v1/realtime" \
 STARTUP_GREETING="" \
-"$VENV/bin/uvicorn" --app-dir demo server:app \
-  --host 0.0.0.0 --port "$UI_PORT" &
+HF_S2S_UPSTREAM="$UPSTREAM" \
+"$VENV/bin/uvicorn" --app-dir "$ROOT/hf-s2s" demo_proxy:app \
+  --host 127.0.0.1 --port "$UI_PORT" &
 children+=("$!")
 
 echo "HF cascaded voice comparison -> http://localhost:${UI_PORT}/"
@@ -206,9 +223,11 @@ echo "HF cascaded voice comparison -> http://localhost:${UI_PORT}/"
 # Optional LAN endpoint for another device, behind the same certificate as the
 # wss wrapper above. Requires accepting that certificate once.
 if [[ -r "$SSL_CERT" && -r "$SSL_KEY" ]]; then
-  SPEECH_TO_SPEECH_URL="wss://${LAN_IP}:${WSS_PORT}/v1/realtime" \
+  SPEECH_TO_SPEECH_URL="/v1/realtime" \
+  OPEN_VOICE_REALTIME_UPSTREAM="ws://127.0.0.1:${BACKEND_PORT}/v1/realtime" \
   STARTUP_GREETING="" \
-  "$VENV/bin/uvicorn" --app-dir demo server:app \
+  HF_S2S_UPSTREAM="$UPSTREAM" \
+  "$VENV/bin/uvicorn" --app-dir "$ROOT/hf-s2s" demo_proxy:app \
     --host 0.0.0.0 --port "$LAN_UI_PORT" \
     --ssl-certfile "$SSL_CERT" \
     --ssl-keyfile "$SSL_KEY" &
