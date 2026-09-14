@@ -27,6 +27,8 @@ data class PairedNodeCredential(
     val deviceId: String,
 )
 
+class NodeAccessRevokedException(message: String) : IOException(message)
+
 class NodeClient(private val baseUrl: String, private val pairingCode: String, trustSelfSigned: Boolean = false) {
     val http: OkHttpClient = if (trustSelfSigned) insecureClient() else sharedHttp
 
@@ -82,12 +84,18 @@ class NodeClient(private val baseUrl: String, private val pairingCode: String, t
             .build()
     }
 
+    fun realtimeRequest(url: String): Request = Request.Builder()
+        .url(url)
+        .header("Authorization", "Bearer $pairingCode")
+        .header("Sec-WebSocket-Protocol", "realtime, openai-insecure-api-key.open-voice-agent, openai-beta.realtime-v1")
+        .build()
+
     fun settings(callback: (Result<NodeSettings>) -> Unit) {
         http.newCall(request("/api/settings")).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) = callback(Result.failure(e))
             override fun onResponse(call: Call, response: Response) = response.use {
                 val raw = it.body?.string().orEmpty()
-                if (!it.isSuccessful) return callback(Result.failure(IOException(if (it.code == 401) "Pairing code rejected" else "Node returned ${it.code}")))
+                if (!it.isSuccessful) return callback(Result.failure(if (it.code == 401) NodeAccessRevokedException("Phone access was revoked") else IOException("Node returned ${it.code}")))
                 runCatching {
                     val j = JSONObject(raw)
                     NodeSettings(
@@ -111,7 +119,7 @@ class NodeClient(private val baseUrl: String, private val pairingCode: String, t
             override fun onFailure(call: Call, e: IOException) = callback(Result.failure(e))
             override fun onResponse(call: Call, response: Response) = response.use {
                 val raw = it.body?.string().orEmpty()
-                if (!it.isSuccessful) callback(Result.failure(IOException("Delegation returned ${it.code}")))
+                if (!it.isSuccessful) callback(Result.failure(if (it.code == 401) NodeAccessRevokedException("Phone access was revoked") else IOException("Delegation returned ${it.code}")))
                 else callback(runCatching { JSONObject(raw).getString("answer") })
             }
         })

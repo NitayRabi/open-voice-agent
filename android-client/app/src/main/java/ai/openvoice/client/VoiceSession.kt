@@ -37,9 +37,7 @@ class VoiceSession(
         val format = AudioFormat.Builder().setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build()
         player = AudioTrack(attrs, format, maxOf(AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT), rate), AudioTrack.MODE_STREAM, AudioManager.AUDIO_SESSION_ID_GENERATE).also { it.play() }
 
-        val req = Request.Builder().url(settings.realtimeUrl)
-            .header("Sec-WebSocket-Protocol", "realtime, openai-insecure-api-key.open-voice-agent, openai-beta.realtime-v1")
-            .build()
+        val req = node.realtimeRequest(settings.realtimeUrl)
         socket = node.http.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: Response) {
                 active.set(true); ws.send(sessionUpdate().toString()); event("listening", null); captureLoop()

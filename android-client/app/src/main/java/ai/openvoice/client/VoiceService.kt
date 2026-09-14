@@ -50,7 +50,10 @@ class VoiceService : Service() {
         val node = NodeClient(saved.url, saved.credential, saved.trustSelfSigned)
         node.settings { result -> result.fold(
             { cfg -> session = VoiceSession(this, node, cfg, ::update).also { it.start() } },
-            { update("error", it.message) },
+            {
+                if (it is NodeAccessRevokedException) SecureNodeStore(this).clear()
+                update("error", if (it is NodeAccessRevokedException) "Access revoked — open the app to pair again" else it.message)
+            },
         ) }
     }
 

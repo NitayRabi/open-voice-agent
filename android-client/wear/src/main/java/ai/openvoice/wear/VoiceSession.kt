@@ -78,10 +78,7 @@ class VoiceSession(
                 AudioManager.AUDIO_SESSION_ID_GENERATE,
             ).also { it.play() }
 
-            val request = Request.Builder()
-                .url(settings.realtimeUrl)
-                .header("Sec-WebSocket-Protocol", "realtime, openai-insecure-api-key.open-voice-agent, openai-beta.realtime-v1")
-                .build()
+            val request = node.realtimeRequest(settings.realtimeUrl)
             socket = node.http.newWebSocket(request, listener)
         } catch (error: Throwable) {
             releaseAudio()

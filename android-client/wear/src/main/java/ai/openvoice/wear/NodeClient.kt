@@ -35,6 +35,8 @@ data class PairingCredential(
     val deviceId: String?,
 )
 
+class NodeAccessRevokedException(message: String) : IOException(message)
+
 internal fun pairingRequestBody(code: String): String = JSONObject()
     .put("code", code.trim())
     .put("device", JSONObject().put("type", "wear").put("label", "Pixel Watch"))
@@ -84,7 +86,7 @@ class NodeClient(baseUrl: String, accessToken: String, trustSelfSigned: Boolean)
             override fun onResponse(call: Call, response: Response) = response.use {
                 val raw = it.body?.string().orEmpty()
                 if (!it.isSuccessful) {
-                    callback(Result.failure(IOException(if (it.code == 401) "Watch access expired or was revoked" else "Node returned ${it.code}")))
+                    callback(Result.failure(if (it.code == 401) NodeAccessRevokedException("Watch access expired or was revoked") else IOException("Node returned ${it.code}")))
                     return@use
                 }
                 callback(runCatching {
@@ -111,7 +113,7 @@ class NodeClient(baseUrl: String, accessToken: String, trustSelfSigned: Boolean)
 
             override fun onResponse(call: Call, response: Response) = response.use {
                 val raw = it.body?.string().orEmpty()
-                if (!it.isSuccessful) callback(Result.failure(IOException("Delegation returned ${it.code}")))
+                if (!it.isSuccessful) callback(Result.failure(if (it.code == 401) NodeAccessRevokedException("Watch access expired or was revoked") else IOException("Delegation returned ${it.code}")))
                 else callback(runCatching { JSONObject(raw).getString("answer") })
             }
         })
@@ -125,6 +127,12 @@ class NodeClient(baseUrl: String, accessToken: String, trustSelfSigned: Boolean)
             .method(method, body)
             .build()
     }
+
+    fun realtimeRequest(url: String): Request = Request.Builder()
+        .url(url)
+        .header("Authorization", "Bearer $auth")
+        .header("Sec-WebSocket-Protocol", "realtime, openai-insecure-api-key.open-voice-agent, openai-beta.realtime-v1")
+        .build()
 
     override fun close() {
         http.dispatcher.cancelAll()

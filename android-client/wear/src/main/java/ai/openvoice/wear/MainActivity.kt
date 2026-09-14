@@ -186,7 +186,12 @@ class MainActivity : ComponentActivity() {
                         starting = false
                         newClient.close()
                         client = null
-                        showTalkScreen(it.message ?: "Could not connect")
+                        if (it is NodeAccessRevokedException) {
+                            store.clear()
+                            showPairingScreen("Watch access was revoked — pair again", node.url, node.trustSelfSigned)
+                        } else {
+                            showTalkScreen(it.message ?: "Could not connect")
+                        }
                     },
                 )
             }
