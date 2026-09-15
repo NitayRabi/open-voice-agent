@@ -30,12 +30,14 @@ class MainActivity : ComponentActivity() {
     private lateinit var container: LinearLayout
     private var client: NodeClient? = null
     private var voiceSession: VoiceSession? = null
+    private var orb: OrbView? = null
     private var starting = false
     private var active = false
     private var showingTasks = false
     private var voiceStatus = "Tap to talk"
     private var agents: List<NodeAgent> = emptyList()
     private var selectedAgentId: String? = null
+    private var voiceState = "idle"
     private val delegations = LinkedHashMap<String, DelegationStatus>()
 
     private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -138,16 +140,8 @@ class MainActivity : ComponentActivity() {
         container.removeAllViews()
         title("Open Voice")
         val status = caption(message ?: voiceStatus)
-        val talk = Button(this).apply {
-            text = if (active || starting) "■" else "●"
-            textSize = 34f
-            setTextColor(Color.WHITE)
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(if (active || starting) STOP else ACCENT)
-            }
-            contentDescription = if (active || starting) "Stop talking" else "Start talking"
-            setOnClickListener { if (active || starting) stopVoice() else requestTalk() }
+        val orb = orbView().apply {
+            this.state = voiceState
             var swipeStart = 0f
             setOnTouchListener { view, event ->
                 when (event.action) {
@@ -162,7 +156,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        container.addView(talk, LinearLayout.LayoutParams(dp(112), dp(112)).apply {
+        container.addView(orb, LinearLayout.LayoutParams(dp(112), dp(112)).apply {
             gravity = Gravity.CENTER_HORIZONTAL
             topMargin = dp(14)
         })
@@ -189,6 +183,16 @@ class MainActivity : ComponentActivity() {
             setTextColor(MUTED)
             background = null
         }, match(dp(8)))
+    }
+
+    // Reuses a single orb instance across re-renders so its animation stays
+    // continuous; the tap gesture is the same start/stop talk control the old
+    // round button provided.
+    private fun orbView(): OrbView {
+        orb ?: OrbView(this).apply {
+            setOnClickListener { if (active || starting) stopVoice() else requestTalk() }
+        }.also { orb = it }
+        return orb!!
     }
 
     private fun showDelegations() {
@@ -251,7 +255,7 @@ class MainActivity : ComponentActivity() {
                 result.fold(
                     onSuccess = { settings ->
                         applyAgents(settings.agents)
-                        val session = VoiceSession(this, newClient, settings, { selectedAgentId }, ::onVoiceEvent, ::onDelegationEvent)
+                        val session = VoiceSession(this, newClient, settings, { selectedAgentId }, ::onVoiceEvent, ::onDelegationEvent, ::onAudioLevel)
                         voiceSession = session
                         session.start()
                     },
@@ -307,25 +311,39 @@ class MainActivity : ComponentActivity() {
         when (state) {
             VoiceSession.State.CONNECTING -> {
                 starting = true
+                voiceState = "connecting"
                 renderVoiceStatus(detail ?: "Connecting…")
             }
             VoiceSession.State.LISTENING -> {
                 starting = false
                 active = true
+                voiceState = "listening"
                 renderVoiceStatus(detail ?: "Listening…")
             }
-            VoiceSession.State.THINKING -> renderVoiceStatus(detail ?: "Thinking…")
-            VoiceSession.State.SPEAKING -> renderVoiceStatus(detail ?: "Speaking…")
+            VoiceSession.State.THINKING -> {
+                voiceState = "thinking"
+                renderVoiceStatus(detail ?: "Thinking…")
+            }
+            VoiceSession.State.SPEAKING -> {
+                voiceState = "speaking"
+                renderVoiceStatus(detail ?: "Speaking…")
+            }
             VoiceSession.State.ERROR -> {
                 stopVoice(false)
+                voiceState = "error"
                 renderVoiceStatus(detail ?: "Voice connection failed")
             }
             VoiceSession.State.IDLE -> {
                 active = false
                 starting = false
+                voiceState = "idle"
                 renderVoiceStatus(detail ?: "Tap to talk")
             }
         }
+    }
+
+    private fun onAudioLevel(level: Float) = runOnUiThread {
+        orb?.level = level * 5f
     }
 
     private fun renderVoiceStatus(message: String) {
@@ -410,7 +428,6 @@ class MainActivity : ComponentActivity() {
 
     private companion object {
         val BACKGROUND = Color.rgb(8, 11, 18)
-        val ACCENT = Color.rgb(70, 100, 210)
         val STOP = Color.rgb(184, 62, 82)
         val MUTED = Color.rgb(173, 184, 207)
         val TASK_ACTIVE = Color.rgb(108, 210, 154)

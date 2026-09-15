@@ -39,6 +39,7 @@ class VoiceSession(
     private val selectedAgentId: () -> String?,
     private val event: (State, String?) -> Unit,
     private val delegationEvent: (DelegationStatus) -> Unit = {},
+    private val onLevel: (Float) -> Unit = {},
 ) {
     enum class State { CONNECTING, LISTENING, THINKING, SPEAKING, ERROR, IDLE }
 
@@ -167,6 +168,12 @@ class VoiceSession(
                 while (active.get() && !Thread.currentThread().isInterrupted) {
                     val count = audioRecord.read(samples, 0, samples.size)
                     if (count <= 0) continue
+                    var sum = 0.0
+                    for (index in 0 until count) {
+                        val value = samples[index].toDouble()
+                        sum += value * value
+                    }
+                    onLevel((kotlin.math.sqrt(sum / count) / 32768.0).toFloat())
                     val suppressPlayback = responseActive || SystemClock.elapsedRealtime() < microphoneMutedUntil
                     val passAudio = !suppressPlayback && gate.shouldPass(samples, count)
                     val bytes = ByteArray(count * 2)
