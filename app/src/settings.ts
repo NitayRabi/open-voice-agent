@@ -103,7 +103,7 @@ function newAgentId(): string {
 function profileFromDefaults(alias = "New agent"): DelegationAgent {
   return {
     id: newAgentId(), alias,
-    brain_source: $sel("brain_source").value as BrainSource,
+    brain_source: "acpx",
     brain_base_url: $in("brain_base_url").value,
     brain_api_key: $in("brain_api_key").value,
     brain_model: $in("brain_model").value,
@@ -128,36 +128,93 @@ function profileFromDefaults(alias = "New agent"): DelegationAgent {
 const profileText = (key: keyof DelegationAgent, label: string, value: unknown, type = "text") =>
   `<label><span>${label}</span><input data-agent-field="${key}" type="${type}" value="${escapeHtml(String(value ?? ""))}" spellcheck="false"></label>`;
 
+function friendlySource(source: DelegationAgent["brain_source"]): string {
+  if (source === "acpx") return "Coding agent";
+  if (source === "remote") return "Cloud / API";
+  if (source === "local") return "Local model";
+  return "ACP provider";
+}
+
+function populateProfileAgentSelect(select: HTMLSelectElement, chosen: string): void {
+  if (!acpxCache) {
+    select.innerHTML = "";
+    option(select, chosen, chosen ? chosen : "Discovering agents…");
+    select.value = chosen;
+    return;
+  }
+  populateAcpxAgents(select, chosen, false);
+  if (chosen && ![...select.options].some((entry) => entry.value === chosen)) {
+    const label = chosen === "custom"
+      ? "Custom agent (saved configuration)"
+      : "Previously selected agent (not currently found)";
+    option(select, chosen, label);
+    select.value = chosen;
+  }
+}
+
+function updateProfileAgent(card: HTMLElement): void {
+  const select = card.querySelector<HTMLSelectElement>(".profile-acp-select");
+  if (!select) return;
+  const note = card.querySelector<HTMLElement>(".profile-acp-note")!;
+  const install = card.querySelector<HTMLButtonElement>(".profile-install-agent")!;
+  if (!acpxCache) {
+    note.textContent = "Discovering available agents…";
+    install.hidden = true;
+    return;
+  }
+  const state = agentNote(select);
+  note.textContent = state.text;
+  install.hidden = !state.install || acpxCache.installing;
+  if (state.install) install.textContent = `Install ${state.install.label}`;
+}
+
 function renderDelegationAgents(agents: DelegationAgent[]): void {
   agentProfiles.innerHTML = "";
+  if (!agents.length) {
+    agentProfiles.innerHTML = '<div class="agent-empty">No agents yet. Add one and choose from the agents found on this computer.</div>';
+  }
   for (const agent of agents) {
     const card = document.createElement("details");
     card.className = "agent-profile";
     card.dataset.agentId = agent.id;
     card.innerHTML = `
-      <summary><span class="agent-summary-name">${escapeHtml(agent.alias || "Unnamed agent")}</span><span class="agent-summary-source">${escapeHtml(agent.brain_source)}</span></summary>
+      <summary><span class="agent-summary-name">${escapeHtml(agent.alias || "Unnamed agent")}</span><span class="agent-summary-source">${escapeHtml(friendlySource(agent.brain_source))}</span></summary>
       <div class="agent-profile-fields">
-        ${profileText("alias", "Display name", agent.alias)}
-        <label><span>Backend type</span><select data-agent-field="brain_source">
-          <option value="acpx">ACP coding agent (acpx)</option><option value="acp">ACP provider registry</option>
-          <option value="remote">OpenAI-compatible endpoint</option><option value="local">Local model</option>
+        ${profileText("alias", "Name", agent.alias)}
+        <label><span>Powered by</span><select data-agent-field="brain_source">
+          <option value="acpx">Coding agent</option>
+          <option value="remote">Cloud / API endpoint</option><option value="local">Local model</option>
+          ${agent.brain_source === "acp" ? '<option value="acp">Existing ACP provider</option>' : ""}
         </select></label>
         <div data-agent-source="remote">${profileText("brain_base_url", "Endpoint", agent.brain_base_url)}${profileText("brain_model", "Model", agent.brain_model)}${profileText("brain_api_key", "API key", agent.brain_api_key, "password")}</div>
-        <div data-agent-source="local">${profileText("brain_local_model", "Local model id or path", agent.brain_local_model)}${profileText("llama_server_bin", "llama-server binary", agent.llama_server_bin)}<div class="field-row">${profileText("brain_local_port", "Port", agent.brain_local_port, "number")}${profileText("brain_local_ctx", "Context", agent.brain_local_ctx, "number")}${profileText("brain_local_ngl", "GPU layers", agent.brain_local_ngl, "number")}</div></div>
-        <div data-agent-source="acpx">${profileText("acpx_agent", "ACP agent id", agent.acpx_agent)}${profileText("acpx_custom_command", "Custom ACP command", agent.acpx_custom_command)}<label><span>Tool permissions</span><select data-agent-field="acpx_permissions"><option value="read">Read-only</option><option value="all">Full access</option><option value="none">No tools</option></select></label>${profileText("acpx_cwd", "Working directory", agent.acpx_cwd)}${profileText("acpx_model", "Model / profile", agent.acpx_model)}${profileText("acpx_bin", "acpx binary", agent.acpx_bin)}</div>
-        <div data-agent-source="acp">${profileText("acpx_agent", "Provider id or alias", agent.acpx_agent)}</div>
-        <label><span>System prompt</span><textarea data-agent-field="brain_system_prompt" rows="3">${escapeHtml(agent.brain_system_prompt)}</textarea></label>
-        <div class="field-row">${profileText("brain_temperature", "Temperature", agent.brain_temperature, "number")}${profileText("delegation_timeout_s", "Timeout (seconds)", agent.delegation_timeout_s, "number")}</div>
-        <label class="check"><input data-agent-field="delegation_speak_result" type="checkbox"><span>Speak result</span></label>
+        <div data-agent-source="local">${profileText("brain_local_model", "Model", agent.brain_local_model)}<details class="profile-advanced"><summary>Local model options</summary><div class="profile-advanced-fields">${profileText("llama_server_bin", "Server binary", agent.llama_server_bin)}<div class="field-row">${profileText("brain_local_port", "Port", agent.brain_local_port, "number")}${profileText("brain_local_ctx", "Context", agent.brain_local_ctx, "number")}${profileText("brain_local_ngl", "GPU layers", agent.brain_local_ngl, "number")}</div></div></details></div>
+        <div data-agent-source="acpx">
+          <label><span>Coding agent</span><select class="profile-acp-select" data-agent-field="acpx_agent"></select></label>
+          <div class="profile-agent-actions"><small class="profile-acp-note"></small><button type="button" class="secondary profile-install-agent" hidden>Install</button><button type="button" class="secondary profile-refresh-agents">Find agents again</button></div>
+          <input data-agent-field="acpx_custom_command" type="hidden" value="${escapeHtml(agent.acpx_custom_command)}">
+          <input data-agent-field="acpx_bin" type="hidden" value="${escapeHtml(agent.acpx_bin)}">
+          <details class="profile-advanced"><summary>Agent options</summary><div class="profile-advanced-fields"><label><span>Access</span><select data-agent-field="acpx_permissions"><option value="read">Read files only</option><option value="all">Allow actions and edits</option><option value="none">No tools</option></select></label>${profileText("acpx_cwd", "Workspace", agent.acpx_cwd)}${profileText("acpx_model", "Model override", agent.acpx_model)}</div></details>
+        </div>
+        <div data-agent-source="acp">${profileText("acpx_agent", "Provider name", agent.acpx_agent)}</div>
+        <details class="profile-advanced"><summary>Instructions &amp; behavior</summary><div class="profile-advanced-fields"><label><span>Instructions</span><textarea data-agent-field="brain_system_prompt" rows="3">${escapeHtml(agent.brain_system_prompt)}</textarea></label><div class="field-row">${profileText("brain_temperature", "Temperature", agent.brain_temperature, "number")}${profileText("delegation_timeout_s", "Time limit (seconds)", agent.delegation_timeout_s, "number")}</div><label class="check"><input data-agent-field="delegation_speak_result" type="checkbox"><span>Read the result aloud</span></label></div></details>
         <button type="button" class="secondary remove-agent">Remove agent</button>
       </div>`;
     const source = card.querySelector<HTMLSelectElement>('[data-agent-field="brain_source"]')!;
     source.value = agent.brain_source;
-    card.querySelector<HTMLSelectElement>('[data-agent-field="acpx_permissions"]')!.value = agent.acpx_permissions;
+    const permissions = card.querySelector<HTMLSelectElement>('[data-agent-field="acpx_permissions"]');
+    if (permissions) permissions.value = agent.acpx_permissions;
     card.querySelector<HTMLInputElement>('[data-agent-field="delegation_speak_result"]')!.checked = agent.delegation_speak_result;
+    const profileAgent = card.querySelector<HTMLSelectElement>(".profile-acp-select");
+    if (profileAgent) {
+      populateProfileAgentSelect(profileAgent, agent.acpx_agent);
+      profileAgent.addEventListener("change", () => updateProfileAgent(card));
+      card.querySelector<HTMLButtonElement>(".profile-refresh-agents")!.addEventListener("click", () => void renderAcpx());
+      card.querySelector<HTMLButtonElement>(".profile-install-agent")!.addEventListener("click", () => void installAcpxAgent(profileAgent, flash));
+    }
     const visibility = () => {
       card.querySelectorAll<HTMLElement>("[data-agent-source]").forEach((el) => { el.hidden = el.dataset.agentSource !== source.value; });
-      card.querySelector(".agent-summary-source")!.textContent = source.value;
+      card.querySelector(".agent-summary-source")!.textContent = friendlySource(source.value as DelegationAgent["brain_source"]);
+      updateProfileAgent(card);
     };
     source.addEventListener("change", visibility);
     card.querySelector<HTMLInputElement>('[data-agent-field="alias"]')!.addEventListener("input", (event) => {
@@ -190,6 +247,7 @@ $("add_delegation_agent").addEventListener("click", () => {
   agents.push(profileFromDefaults(`Agent ${agents.length + 1}`));
   renderDelegationAgents(agents);
   agentProfiles.querySelector<HTMLDetailsElement>(".agent-profile:last-child")!.open = true;
+  if (!acpxCache) void renderAcpx();
 });
 
 function updateGateLabel(): void {
@@ -397,6 +455,11 @@ async function renderAcpx(): Promise<void> {
   $("setup_acpx_status").textContent = s.installing ? "Installing…" : "";
   populateAcpxAgents($sel("acpx_agent"), current.acpx_agent || "", true);
   populateAcpxAgents($sel("setup_acpx_agent"), current.acpx_agent === "custom" ? "" : current.acpx_agent || "", false);
+  document.querySelectorAll<HTMLSelectElement>(".profile-acp-select").forEach((select) => {
+    populateProfileAgentSelect(select, select.value);
+    const card = select.closest<HTMLElement>(".agent-profile");
+    if (card) updateProfileAgent(card);
+  });
   updateAcpxAgentNote();
 }
 
@@ -884,6 +947,7 @@ const shouldShowSetup = !current.setup_completed
 if (shouldShowSetup) showSetup(true);
 await renderModels();
 applyToForm(current); // re-apply brain_local_model now that the dropdown is populated
+if (current.delegation_agents?.some((agent) => agent.brain_source === "acpx")) void renderAcpx();
 initSetupForm();
 // Device enumeration can wait on browser permission UI. Never hold the
 // settings/setup screen behind that prompt.
