@@ -15,7 +15,7 @@
         "agent:main:main"
       ],
       "cwd": "..",
-      "timeoutSeconds": 180.0,
+      "timeoutSeconds": 0,
       "env": {}
     }
   }

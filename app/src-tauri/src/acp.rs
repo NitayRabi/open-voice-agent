@@ -9,7 +9,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -142,18 +142,32 @@ fn receive(
     stdin: &mut ChildStdin,
     lines: &Receiver<String>,
     id: u64,
-    deadline: Instant,
+    deadline: Option<Instant>,
     chunks: &mut String,
 ) -> Result<Value> {
     loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            let _ = child.kill();
-            bail!("ACP provider timed out");
-        }
-        let line = lines
-            .recv_timeout(remaining)
-            .context("ACP provider exited before replying")?;
+        let line = match deadline {
+            Some(deadline) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    let _ = child.kill();
+                    bail!("ACP provider timed out");
+                }
+                match lines.recv_timeout(remaining) {
+                    Ok(line) => line,
+                    Err(RecvTimeoutError::Timeout) => {
+                        let _ = child.kill();
+                        bail!("ACP provider timed out");
+                    }
+                    Err(RecvTimeoutError::Disconnected) => {
+                        bail!("ACP provider exited before replying");
+                    }
+                }
+            }
+            None => lines
+                .recv()
+                .context("ACP provider exited before replying")?,
+        };
         let Ok(message) = serde_json::from_str::<Value>(&line) else {
             continue;
         };
@@ -250,8 +264,12 @@ pub fn delegate(task: &str, requested: Option<&str>) -> Result<String> {
             }
         }
     });
-    let timeout = provider.timeout_seconds.clamp(1.0, 3600.0);
-    let deadline = Instant::now() + Duration::from_secs_f64(timeout);
+    // A non-positive timeout means completion-driven operation. This is useful
+    // for asynchronous agents whose result is reported back to voice whenever
+    // it arrives, rather than failing an otherwise healthy long-running task.
+    let deadline = (provider.timeout_seconds > 0.0).then(|| {
+        Instant::now() + Duration::from_secs_f64(provider.timeout_seconds.clamp(1.0, 3600.0))
+    });
     let mut chunks = String::new();
     let result = (|| -> Result<String> {
         send(
