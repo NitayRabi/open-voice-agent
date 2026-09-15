@@ -14,6 +14,7 @@ import java.io.Closeable
 import java.io.IOException
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
@@ -57,6 +58,7 @@ class NodeClient(baseUrl: String, accessToken: String, trustSelfSigned: Boolean)
     val http: OkHttpClient = if (trustSelfSigned) insecureClient() else OkHttpClient()
     private val root = baseUrl.trim().trimEnd('/')
     private val auth = accessToken.trim()
+    private val closed = AtomicBoolean(false)
 
     /** Exchange the reusable desktop pairing code for this watch's revocable credential. */
     fun pair(code: String, callback: (Result<PairingCredential>) -> Unit) {
@@ -135,8 +137,16 @@ class NodeClient(baseUrl: String, accessToken: String, trustSelfSigned: Boolean)
         .build()
 
     override fun close() {
-        http.dispatcher.cancelAll()
-        http.connectionPool.evictAll()
+        if (!closed.compareAndSet(false, true)) return
+        // Closing a pooled TLS socket may perform a best-effort close_notify
+        // write. Wear OS enforces StrictMode on the main thread, so perform all
+        // OkHttp teardown in a worker even when close() is called by Activity
+        // lifecycle or a UI callback.
+        Thread({
+            http.dispatcher.cancelAll()
+            http.connectionPool.evictAll()
+            http.dispatcher.executorService.shutdown()
+        }, "ova-watch-http-close").start()
     }
 
     private companion object {
