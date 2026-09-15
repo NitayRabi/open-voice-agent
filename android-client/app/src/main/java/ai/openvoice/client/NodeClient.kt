@@ -7,6 +7,7 @@ import org.json.JSONObject
 import java.io.IOException
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
+import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
@@ -31,6 +32,11 @@ class NodeAccessRevokedException(message: String) : IOException(message)
 
 class NodeClient(private val baseUrl: String, private val pairingCode: String, trustSelfSigned: Boolean = false) {
     val http: OkHttpClient = if (trustSelfSigned) insecureClient() else sharedHttp
+    private val delegationHttp = http.newBuilder()
+        // Agent work is asynchronous from the UI and may stay quiet for longer
+        // than OkHttp's default ten-second read timeout.
+        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .build()
 
     companion object {
         private val sharedHttp = OkHttpClient()
@@ -115,7 +121,7 @@ class NodeClient(private val baseUrl: String, private val pairingCode: String, t
 
     fun delegate(requestText: String, callback: (Result<String>) -> Unit) {
         val body = JSONObject().put("request", requestText).toString()
-        http.newCall(request("/api/delegate", "POST", body)).enqueue(object : Callback {
+        delegationHttp.newCall(request("/api/delegate", "POST", body)).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) = callback(Result.failure(e))
             override fun onResponse(call: Call, response: Response) = response.use {
                 val raw = it.body?.string().orEmpty()

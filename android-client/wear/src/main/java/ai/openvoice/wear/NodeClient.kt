@@ -14,6 +14,7 @@ import java.io.Closeable
 import java.io.IOException
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
@@ -56,6 +57,12 @@ internal fun parsePairingResponse(raw: String): PairingCredential {
 
 class NodeClient(baseUrl: String, accessToken: String, trustSelfSigned: Boolean) : Closeable {
     val http: OkHttpClient = if (trustSelfSigned) insecureClient() else OkHttpClient()
+    private val delegationHttp = http.newBuilder()
+        // Delegations run asynchronously from the voice UI and can legitimately
+        // take minutes. Completion, rather than an arbitrary socket idle period,
+        // is what wakes the voice session to report the result.
+        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .build()
     private val root = baseUrl.trim().trimEnd('/')
     private val auth = accessToken.trim()
     private val closed = AtomicBoolean(false)
@@ -110,7 +117,7 @@ class NodeClient(baseUrl: String, accessToken: String, trustSelfSigned: Boolean)
 
     fun delegate(requestText: String, callback: (Result<String>) -> Unit) {
         val json = JSONObject().put("request", requestText).toString()
-        http.newCall(request("/api/delegate", "POST", json)).enqueue(object : Callback {
+        delegationHttp.newCall(request("/api/delegate", "POST", json)).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) = callback(Result.failure(e))
 
             override fun onResponse(call: Call, response: Response) = response.use {
