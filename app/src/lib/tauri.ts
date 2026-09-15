@@ -63,7 +63,7 @@ async function api<T>(path: string, { method = "GET", body }: ApiOptions = {}): 
 export interface Commands {
   get_settings: { args: void; result: Settings };
   save_settings: { args: { settings: Settings }; result: void };
-  delegate: { args: { request: string }; result: string };
+  delegate: { args: { request: string; agentId?: string }; result: string };
   acpx_status: { args: void; result: AcpxStatus };
   acpx_install: { args: void; result: string };
   acpx_install_agent: { args: { id: string }; result: void };
@@ -99,8 +99,8 @@ type WebImpls = { [K in CommandName]?: (args: Args<K>) => Promise<Result<K>> | R
 const WEB: WebImpls = {
   get_settings: () => api<Settings>("/api/settings"),
   save_settings: ({ settings }) => api<void>("/api/settings", { method: "POST", body: { settings } }),
-  delegate: ({ request }) =>
-    api<{ answer: string }>("/api/delegate", { method: "POST", body: { request } }).then((d) => d.answer),
+  delegate: ({ request, agentId }) =>
+    api<{ answer: string }>("/api/delegate", { method: "POST", body: { request, agent_id: agentId } }).then((d) => d.answer),
   acpx_status: () => api<AcpxStatus>("/api/acpx/status"),
   acpx_install: () => api<{ path: string }>("/api/acpx/install", { method: "POST" }).then((d) => d.path),
   acpx_install_agent: ({ id }) => api<void>("/api/acpx/install_agent", { method: "POST", body: { id } }),
@@ -212,6 +212,6 @@ export async function getSettings(): Promise<Settings> {
 export async function saveSettings(settings: Settings): Promise<void> {
   return invoke("save_settings", { settings });
 }
-export async function delegate(request: string): Promise<string> {
-  return invoke("delegate", { request });
+export async function delegate(request: string, agentId?: string): Promise<string> {
+  return invoke("delegate", { request, agentId });
 }

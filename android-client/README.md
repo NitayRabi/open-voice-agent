@@ -14,6 +14,10 @@ back through the node to its configured ACP provider (OpenClaw by default).
    in the Android phone or Wear OS app. The code is not retained after pairing.
 3. Tap **Connect**, or enable the floating orb and tap it from any app.
 
+When the node has named agent profiles, their alias appears beside the orb.
+Tap the alias to cycle profiles. The phone remembers its own selection and the
+floating orb reads it for each new delegated task.
+
 If the node uses the desktop app's generated/self-signed TLS certificate,
 enable **Trust this node's self-signed certificate**. Keep it off for public
 servers with a normal trusted certificate. On recent Android versions a

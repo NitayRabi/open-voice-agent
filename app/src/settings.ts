@@ -1,7 +1,7 @@
 import { getSettings, saveSettings, invoke, listen, isWeb } from "./lib/tauri.js";
 import { element as $, input as $in, select as $sel, valueElement } from "./lib/dom.js";
 import { errorText } from "./lib/errors.js";
-import type { AcpxAgent, AcpxStatus, BrainSource, ModelInfo, ModelSource, ModelsList, Settings } from "./lib/types.js";
+import type { AcpxAgent, AcpxStatus, BrainSource, DelegationAgent, ModelInfo, ModelSource, ModelsList, Settings } from "./lib/types.js";
 
 const logEl = $("log");
 const statusEl = $("status");
@@ -76,6 +76,7 @@ function applyToForm(s: Settings): void {
   updateBrainVisibility();
   updateSpeechVisibility();
   $in("speech_model_path").value = s.speech_model?.includes("/") ? s.speech_model : "";
+  renderDelegationAgents(s.delegation_agents || []);
 }
 
 function readForm(base: Settings): Settings {
@@ -89,8 +90,107 @@ function readForm(base: Settings): Settings {
     else if (kind === "int" || kind === "float") out[id] = Number(el.value);
     else out[id] = el.value;
   }
+  s.delegation_agents = readDelegationAgents();
   return s;
 }
+
+const agentProfiles = $("delegation_agents");
+
+function newAgentId(): string {
+  return crypto.randomUUID?.() || `agent-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function profileFromDefaults(alias = "New agent"): DelegationAgent {
+  return {
+    id: newAgentId(), alias,
+    brain_source: $sel("brain_source").value as BrainSource,
+    brain_base_url: $in("brain_base_url").value,
+    brain_api_key: $in("brain_api_key").value,
+    brain_model: $in("brain_model").value,
+    brain_local_model: $sel("brain_local_model").value,
+    llama_server_bin: $in("llama_server_bin").value,
+    brain_local_port: Number($in("brain_local_port").value) || 8127,
+    brain_local_ctx: Number($in("brain_local_ctx").value) || 8192,
+    brain_local_ngl: Number($in("brain_local_ngl").value) || 999,
+    acpx_agent: $sel("acpx_agent").value,
+    acpx_custom_command: $in("acpx_custom_command").value,
+    acpx_permissions: $sel("acpx_permissions").value as DelegationAgent["acpx_permissions"],
+    acpx_model: $in("acpx_model").value,
+    acpx_cwd: $in("acpx_cwd").value,
+    acpx_bin: $in("acpx_bin").value,
+    brain_system_prompt: (document.getElementById("brain_system_prompt") as HTMLTextAreaElement).value,
+    brain_temperature: Number($in("brain_temperature").value) || 0.3,
+    delegation_timeout_s: Number($in("delegation_timeout_s").value) || 120,
+    delegation_speak_result: $in("delegation_speak_result").checked,
+  };
+}
+
+const profileText = (key: keyof DelegationAgent, label: string, value: unknown, type = "text") =>
+  `<label><span>${label}</span><input data-agent-field="${key}" type="${type}" value="${escapeHtml(String(value ?? ""))}" spellcheck="false"></label>`;
+
+function renderDelegationAgents(agents: DelegationAgent[]): void {
+  agentProfiles.innerHTML = "";
+  for (const agent of agents) {
+    const card = document.createElement("details");
+    card.className = "agent-profile";
+    card.dataset.agentId = agent.id;
+    card.innerHTML = `
+      <summary><span class="agent-summary-name">${escapeHtml(agent.alias || "Unnamed agent")}</span><span class="agent-summary-source">${escapeHtml(agent.brain_source)}</span></summary>
+      <div class="agent-profile-fields">
+        ${profileText("alias", "Display name", agent.alias)}
+        <label><span>Backend type</span><select data-agent-field="brain_source">
+          <option value="acpx">ACP coding agent (acpx)</option><option value="acp">ACP provider registry</option>
+          <option value="remote">OpenAI-compatible endpoint</option><option value="local">Local model</option>
+        </select></label>
+        <div data-agent-source="remote">${profileText("brain_base_url", "Endpoint", agent.brain_base_url)}${profileText("brain_model", "Model", agent.brain_model)}${profileText("brain_api_key", "API key", agent.brain_api_key, "password")}</div>
+        <div data-agent-source="local">${profileText("brain_local_model", "Local model id or path", agent.brain_local_model)}${profileText("llama_server_bin", "llama-server binary", agent.llama_server_bin)}<div class="field-row">${profileText("brain_local_port", "Port", agent.brain_local_port, "number")}${profileText("brain_local_ctx", "Context", agent.brain_local_ctx, "number")}${profileText("brain_local_ngl", "GPU layers", agent.brain_local_ngl, "number")}</div></div>
+        <div data-agent-source="acpx">${profileText("acpx_agent", "ACP agent id", agent.acpx_agent)}${profileText("acpx_custom_command", "Custom ACP command", agent.acpx_custom_command)}<label><span>Tool permissions</span><select data-agent-field="acpx_permissions"><option value="read">Read-only</option><option value="all">Full access</option><option value="none">No tools</option></select></label>${profileText("acpx_cwd", "Working directory", agent.acpx_cwd)}${profileText("acpx_model", "Model / profile", agent.acpx_model)}${profileText("acpx_bin", "acpx binary", agent.acpx_bin)}</div>
+        <div data-agent-source="acp">${profileText("acpx_agent", "Provider id or alias", agent.acpx_agent)}</div>
+        <label><span>System prompt</span><textarea data-agent-field="brain_system_prompt" rows="3">${escapeHtml(agent.brain_system_prompt)}</textarea></label>
+        <div class="field-row">${profileText("brain_temperature", "Temperature", agent.brain_temperature, "number")}${profileText("delegation_timeout_s", "Timeout (seconds)", agent.delegation_timeout_s, "number")}</div>
+        <label class="check"><input data-agent-field="delegation_speak_result" type="checkbox"><span>Speak result</span></label>
+        <button type="button" class="secondary remove-agent">Remove agent</button>
+      </div>`;
+    const source = card.querySelector<HTMLSelectElement>('[data-agent-field="brain_source"]')!;
+    source.value = agent.brain_source;
+    card.querySelector<HTMLSelectElement>('[data-agent-field="acpx_permissions"]')!.value = agent.acpx_permissions;
+    card.querySelector<HTMLInputElement>('[data-agent-field="delegation_speak_result"]')!.checked = agent.delegation_speak_result;
+    const visibility = () => {
+      card.querySelectorAll<HTMLElement>("[data-agent-source]").forEach((el) => { el.hidden = el.dataset.agentSource !== source.value; });
+      card.querySelector(".agent-summary-source")!.textContent = source.value;
+    };
+    source.addEventListener("change", visibility);
+    card.querySelector<HTMLInputElement>('[data-agent-field="alias"]')!.addEventListener("input", (event) => {
+      card.querySelector(".agent-summary-name")!.textContent = (event.target as HTMLInputElement).value || "Unnamed agent";
+    });
+    card.querySelector<HTMLButtonElement>(".remove-agent")!.addEventListener("click", () => card.remove());
+    visibility();
+    agentProfiles.append(card);
+  }
+}
+
+function readDelegationAgents(): DelegationAgent[] {
+  return [...agentProfiles.querySelectorAll<HTMLElement>(".agent-profile")].map((card) => {
+    const base = profileFromDefaults();
+    base.id = card.dataset.agentId || newAgentId();
+    for (const control of card.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("[data-agent-field]")) {
+      if (control.closest<HTMLElement>("[data-agent-source]")?.hidden) continue;
+      const key = control.dataset.agentField as keyof DelegationAgent;
+      const out = base as unknown as Record<string, unknown>;
+      out[key] = control instanceof HTMLInputElement && control.type === "checkbox" ? control.checked
+        : control instanceof HTMLInputElement && control.type === "number" ? Number(control.value)
+          : control.value;
+    }
+    return base;
+  }).filter((agent) => agent.alias.trim());
+}
+
+$("add_delegation_agent").addEventListener("click", () => {
+  const agents = readDelegationAgents();
+  agents.push(profileFromDefaults(`Agent ${agents.length + 1}`));
+  renderDelegationAgents(agents);
+  agentProfiles.querySelector<HTMLDetailsElement>(".agent-profile:last-child")!.open = true;
+});
 
 function updateGateLabel(): void {
   const v = Number($in("noise_gate_db").value);

@@ -19,6 +19,8 @@ token; only that token is encrypted and retained on the watch. Tap the round
 microphone control to start a voice session; tap the stop control or leave the
 activity to close the microphone, speaker, network calls, and WebSocket. Use
 **Forget & re-pair** to erase the saved token and perform a new exchange.
+If the node exposes multiple named agents, swipe the round control left or
+right to change the current agent; its alias is shown directly below the orb.
 
 Cleartext HTTP is supported for trusted LAN development. For normal use,
 prefer HTTPS with a valid certificate. The self-signed option deliberately

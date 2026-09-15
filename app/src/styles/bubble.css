@@ -19,6 +19,25 @@ body {
   overflow: hidden;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
+.orb-row { position: relative; display: flex; align-items: center; justify-content: center; }
+#agent-switch {
+  position: absolute;
+  right: -6px;
+  bottom: 10px;
+  max-width: 60px;
+  padding: 4px 7px;
+  overflow: hidden;
+  border: 1px solid var(--orb-line);
+  border-radius: 999px;
+  background: var(--orb-surface);
+  color: var(--orb-ink);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  z-index: 3;
+}
+#agent-switch:disabled { cursor: default; opacity: .72; }
 body {
   display: flex;
   flex-direction: column;

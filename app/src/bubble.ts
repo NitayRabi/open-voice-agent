@@ -5,12 +5,14 @@ import { TaskToast } from "./lib/task-toast.js";
 import { element } from "./lib/dom.js";
 import { ensureVoiceBackend, keepVoiceBackendAlive } from "./lib/backend-lifecycle.js";
 import type { PipelineState, Settings } from "./lib/types.js";
+import { AgentSelection } from "./lib/agent-selection.js";
 
 const orb = element("orb");
 const gear = element("gear");
 const caption = element("caption");
 const visual = new StormOrb(orb);
 const taskToast = new TaskToast({ compact: true });
+const agentSelection = new AgentSelection(element("agent-switch") as HTMLButtonElement);
 
 const CAPTIONS: Record<PipelineState, string> = {
   idle: "tap to talk",
@@ -24,13 +26,15 @@ const CAPTIONS: Record<PipelineState, string> = {
 };
 
 const pipeline = new VoicePipeline({
-  delegate: (request) => delegate(request),
+  delegate: (request) => delegate(request, agentSelection.currentId()),
+  shouldSpeakDelegatedResult: () => agentSelection.speakResult(true),
   ensureBackend: ensureVoiceBackend,
   backendActivity: keepVoiceBackendAlive,
 });
 
 async function loadSettings(): Promise<Settings> {
   const settings = await getSettings();
+  agentSelection.configure(settings);
   pipeline.configure(settings);
   return settings;
 }

@@ -42,10 +42,20 @@ class SecureNodeStore(context: Context) {
 
     fun clear() = preferences.edit().clear().apply()
 
+    fun selectedAgent(): Pair<String, String>? {
+        val id = preferences.getString(AGENT_ID, null)?.takeIf { it.isNotBlank() } ?: return null
+        return id to preferences.getString(AGENT_ALIAS, "Agent").orEmpty()
+    }
+
+    fun selectAgent(id: String, alias: String) = preferences.edit()
+        .putString(AGENT_ID, id).putString(AGENT_ALIAS, alias).apply()
+
     private companion object {
         const val URL = "url"
         const val CREDENTIAL = "credential"
         const val DEVICE_ID = "device_id"
         const val TRUST = "trust_self_signed"
+        const val AGENT_ID = "agent_id"
+        const val AGENT_ALIAS = "agent_alias"
     }
 }

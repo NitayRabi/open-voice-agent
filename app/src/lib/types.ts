@@ -25,6 +25,31 @@ export type BrainSource = ModelSource | "acpx";
 /** acpx tool-permission policy for the delegated agent. */
 export type AcpxPermissions = "read" | "all" | "none";
 
+/** One named delegation backend; conversational speech settings stay global. */
+export interface DelegationAgent {
+  id: string;
+  alias: string;
+  brain_source: BrainSource | "acp";
+  brain_base_url: string;
+  brain_api_key: string;
+  brain_model: string;
+  brain_local_model: string;
+  llama_server_bin: string;
+  brain_local_port: number;
+  brain_local_ctx: number;
+  brain_local_ngl: number;
+  acpx_agent: string;
+  acpx_custom_command: string;
+  acpx_permissions: AcpxPermissions;
+  acpx_model: string;
+  acpx_cwd: string;
+  acpx_bin: string;
+  brain_system_prompt: string;
+  brain_temperature: number;
+  delegation_timeout_s: number;
+  delegation_speak_result: boolean;
+}
+
 /** Lifecycle of the voice pipeline; also the orb's visual state. */
 export type PipelineState =
   | "idle"
@@ -77,6 +102,7 @@ export interface Settings {
   acpx_model: string;
   acpx_cwd: string;
   acpx_bin: string;
+  delegation_agents: DelegationAgent[];
   hf_token: string;
   brain_system_prompt: string;
   brain_temperature: number;

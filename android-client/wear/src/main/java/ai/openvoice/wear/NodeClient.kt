@@ -29,7 +29,10 @@ data class NodeSettings(
     val delegationToolName: String,
     val delegationToolDescription: String,
     val speakDelegatedResult: Boolean,
+    val agents: List<NodeAgent>,
 )
+
+data class NodeAgent(val id: String, val alias: String, val speakDelegatedResult: Boolean)
 
 data class PairingCredential(
     val accessToken: String,
@@ -100,6 +103,15 @@ class NodeClient(baseUrl: String, accessToken: String, trustSelfSigned: Boolean)
                 }
                 callback(runCatching {
                     val json = JSONObject(raw)
+                    val agentsJson = json.optJSONArray("delegation_agents")
+                    val agents = buildList {
+                        if (agentsJson != null) for (i in 0 until agentsJson.length()) {
+                            val agent = agentsJson.optJSONObject(i) ?: continue
+                            val id = agent.optString("id").trim()
+                            val alias = agent.optString("alias").trim()
+                            if (id.isNotEmpty() && alias.isNotEmpty()) add(NodeAgent(id, alias, agent.optBoolean("delegation_speak_result", true)))
+                        }
+                    }
                     NodeSettings(
                         realtimeUrl = json.getString("server_url"),
                         sampleRate = json.optInt("sample_rate", 16_000),
@@ -109,14 +121,17 @@ class NodeClient(baseUrl: String, accessToken: String, trustSelfSigned: Boolean)
                         delegationToolName = json.optString("delegation_tool_name", "delegate_task"),
                         delegationToolDescription = json.optString("delegation_tool_description", "Hand a task to the more capable brain model."),
                         speakDelegatedResult = json.optBoolean("delegation_speak_result", true),
+                        agents = agents,
                     )
                 })
             }
         })
     }
 
-    fun delegate(requestText: String, callback: (Result<String>) -> Unit) {
-        val json = JSONObject().put("request", requestText).toString()
+    fun delegate(requestText: String, agentId: String?, callback: (Result<String>) -> Unit) {
+        val json = JSONObject().put("request", requestText).apply {
+            if (!agentId.isNullOrBlank()) put("agent_id", agentId)
+        }.toString()
         delegationHttp.newCall(request("/api/delegate", "POST", json)).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) = callback(Result.failure(e))
 

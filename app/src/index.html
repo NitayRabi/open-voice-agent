@@ -203,6 +203,17 @@
 
       <!-- DELEGATION -->
       <section id="tab-delegation" class="tab">
+        <div class="agent-profiles-head">
+          <div>
+            <h3>Agent profiles</h3>
+            <p class="muted">Each named agent has its own delegation backend. Voice, microphone, and speech-to-speech settings remain shared.</p>
+          </div>
+          <button id="add_delegation_agent" type="button" class="secondary">Add agent</button>
+        </div>
+        <div id="delegation_agents" class="agent-profiles"></div>
+        <hr />
+        <h3>Default backend</h3>
+        <p class="muted">Used when no named profiles exist, and by older clients that do not select an agent.</p>
         <p class="muted">
           The voice model just talks. It has one tool — <code>delegate_task</code> — and
           calls it when something actually needs doing. The task then goes to the "brain" —

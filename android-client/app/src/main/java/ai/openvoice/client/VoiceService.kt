@@ -7,6 +7,8 @@ import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
 import android.view.*
+import android.widget.Button
+import android.widget.LinearLayout
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import kotlin.math.abs
@@ -24,6 +26,10 @@ class VoiceService : Service() {
     }
 
     private var orb: OrbView? = null
+    private var overlay: View? = null
+    private var agentButton: Button? = null
+    private var agents: List<NodeAgent> = emptyList()
+    private var selectedAgentId: String? = null
     private var session: VoiceSession? = null
     private var state = "idle"
 
@@ -49,7 +55,10 @@ class VoiceService : Service() {
         update("connecting", null)
         val node = NodeClient(saved.url, saved.credential, saved.trustSelfSigned)
         node.settings { result -> result.fold(
-            { cfg -> session = VoiceSession(this, node, cfg, ::update).also { it.start() } },
+            { cfg ->
+                applyAgents(cfg.agents)
+                session = VoiceSession(this, node, cfg, { SecureNodeStore(this).selectedAgent()?.first ?: selectedAgentId }, ::update).also { it.start() }
+            },
             {
                 if (it is NodeAccessRevokedException) SecureNodeStore(this).clear()
                 update("error", if (it is NodeAccessRevokedException) "Access revoked — open the app to pair again" else it.message)
@@ -74,23 +83,60 @@ class VoiceService : Service() {
     private fun showOverlay() {
         if (orb != null || !Settings.canDrawOverlays(this)) return
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        val size = (76 * resources.displayMetrics.density).toInt()
-        val params = WindowManager.LayoutParams(size, size, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+        val height = (76 * resources.displayMetrics.density).toInt()
+        val width = (142 * resources.displayMetrics.density).toInt()
+        val params = WindowManager.LayoutParams(width, height, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT).apply { gravity = Gravity.TOP or Gravity.START; x = resources.displayMetrics.widthPixels - size - 24; y = resources.displayMetrics.heightPixels / 3 }
+            PixelFormat.TRANSLUCENT).apply { gravity = Gravity.TOP or Gravity.START; x = resources.displayMetrics.widthPixels - width - 24; y = resources.displayMetrics.heightPixels / 3 }
+        val root = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         orb = OrbView(this).also { view ->
             view.state = state
             var downX = 0f; var downY = 0f; var startX = 0; var startY = 0
             view.setOnTouchListener { _, e ->
                 when (e.action) {
                     MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; startX = params.x; startY = params.y; true }
-                    MotionEvent.ACTION_MOVE -> { params.x = startX + (e.rawX - downX).toInt(); params.y = startY + (e.rawY - downY).toInt(); wm.updateViewLayout(view, params); true }
+                    MotionEvent.ACTION_MOVE -> { params.x = startX + (e.rawX - downX).toInt(); params.y = startY + (e.rawY - downY).toInt(); wm.updateViewLayout(root, params); true }
                     MotionEvent.ACTION_UP -> { if (abs(e.rawX - downX) < 12 && abs(e.rawY - downY) < 12) toggle(); true }
                     else -> false
                 }
             }
-            wm.addView(view, params)
+            root.addView(view, LinearLayout.LayoutParams(height, height))
         }
+        agentButton = Button(this).apply {
+            text = SecureNodeStore(this@VoiceService).selectedAgent()?.second ?: "Agent"
+            textSize = 10f; isAllCaps = false; setPadding(2, 0, 2, 0)
+            setOnClickListener { cycleAgent() }
+            root.addView(this, LinearLayout.LayoutParams(width - height, height / 2))
+        }
+        overlay = root
+        wm.addView(root, params)
+        refreshAgents()
+    }
+
+    private fun refreshAgents() {
+        val saved = SecureNodeStore(this).load() ?: return
+        NodeClient(saved.url, saved.credential, saved.trustSelfSigned).settings { result ->
+            result.onSuccess { applyAgents(it.agents) }
+        }
+    }
+
+    @Synchronized private fun applyAgents(incoming: List<NodeAgent>) {
+        agents = incoming
+        if (agents.isEmpty()) { selectedAgentId = null; agentButton?.post { agentButton?.text = "Agent" }; return }
+        val saved = SecureNodeStore(this).selectedAgent()?.first
+        val selected = agents.find { it.id == saved } ?: agents.first()
+        selectedAgentId = selected.id
+        SecureNodeStore(this).selectAgent(selected.id, selected.alias)
+        agentButton?.post { agentButton?.text = selected.alias }
+    }
+
+    @Synchronized private fun cycleAgent() {
+        if (agents.size < 2) return
+        val index = agents.indexOfFirst { it.id == selectedAgentId }.coerceAtLeast(0)
+        val selected = agents[(index + 1) % agents.size]
+        selectedAgentId = selected.id
+        SecureNodeStore(this).selectAgent(selected.id, selected.alias)
+        agentButton?.text = selected.alias
     }
 
     private fun notification(): Notification {
@@ -107,7 +153,7 @@ class VoiceService : Service() {
     }
 
     override fun onDestroy() {
-        session?.stop(); orb?.let { runCatching { (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(it) } }; orb = null
+        session?.stop(); overlay?.let { runCatching { (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(it) } }; overlay = null; orb = null
         super.onDestroy()
     }
 }

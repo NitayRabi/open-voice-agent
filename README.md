@@ -1,6 +1,13 @@
 # open-voice-agent
 
 A local speech-to-speech voice agent that lives in a floating desktop bubble.
+
+Named agent profiles let the same speech session delegate to different capable
+backends. Each profile has an alias and its own ACP/acpx, OpenAI-compatible
+endpoint, or local-model configuration. Pick the current profile beside the
+desktop or Android orb; on Wear OS, swipe the orb left or right. The selection
+is local to each client and is attached to each delegation request, so switching
+profiles never restarts the speech-to-speech session.
 Talk to it; when you ask for something that needs real thinking, it hands the
 work to a bigger model and speaks back the answer.
 

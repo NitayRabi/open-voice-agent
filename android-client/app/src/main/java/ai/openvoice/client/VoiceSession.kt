@@ -16,6 +16,7 @@ class VoiceSession(
     private val context: Context,
     private val node: NodeClient,
     private val settings: NodeSettings,
+    private val selectedAgentId: () -> String?,
     private val event: (String, String?) -> Unit,
 ) {
     private var socket: WebSocket? = null
@@ -130,12 +131,14 @@ class VoiceSession(
         val request = runCatching { JSONObject(j.optString("arguments", "{}")).optString("request") }.getOrDefault("")
         socket?.send(JSONObject().put("type", "conversation.item.create").put("item", JSONObject().put("type", "function_call_output").put("call_id", callId).put("output", "Handed to the brain. Tell the user briefly that you're on it.")).toString())
         responseActive = true; socket?.send(JSONObject().put("type", "response.create").toString()); event("delegating", request)
-        node.delegate(request) { result ->
+        val agentId = selectedAgentId()
+        node.delegate(request, agentId) { result ->
             val report = result.fold(
                 { "The delegated task is complete. The agent answered: $it. Relay the result in one or two natural spoken sentences." },
                 { "The delegated task failed: ${it.message}. Let me know briefly." },
             )
-            if (settings.speakDelegatedResult || result.isFailure) synchronized(reports) { reports.add(report) }
+            val speak = settings.agents.find { it.id == agentId }?.speakDelegatedResult ?: settings.speakDelegatedResult
+            if (speak || result.isFailure) synchronized(reports) { reports.add(report) }
             flushReport()
         }
     }

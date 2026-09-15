@@ -53,6 +53,8 @@ interface CaptureMessage {
 export interface PipelineOptions {
   /** Runs a delegated task and resolves with the spoken-back answer. */
   delegate?: (request: string) => Promise<string>;
+  /** Allows a selected backend profile to override result speech per task. */
+  shouldSpeakDelegatedResult?: () => boolean;
   /** Directory holding the audio worklets; defaults to `../worklets/`. */
   workletBase?: string | URL;
   /** Demand-start a managed backend and resolve once it is ready. */
@@ -551,11 +553,12 @@ export class VoicePipeline extends EventTarget {
       });
       return;
     }
+    const speakResult = this.opts.shouldSpeakDelegatedResult?.() ?? this._cfg.delegation_speak_result;
     try {
       const answer = await this.opts.delegate(request);
       this._emit("transcript", { role: "tool", text: `brain ✓ ${answer}` });
       this._emit("task", { id: taskId, request, status: "completed", result: answer });
-      if (this._cfg.delegation_speak_result && answer) {
+      if (speakResult && answer) {
         this._queueAgentReport(
           `The delegated task is complete. The agent answered: ${answer}. Relay the result to me in one or two natural spoken sentences.`,
         );

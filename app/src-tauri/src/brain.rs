@@ -56,17 +56,25 @@ fn resolve_target(app: &AppHandle, cfg: &Settings) -> Result<Target> {
 }
 
 /// Blocking. POST `{base}/chat/completions`, return the assistant message text.
-pub fn delegate(app: &AppHandle, cfg: &Settings, request: &str) -> Result<String> {
+pub fn delegate(app: &AppHandle, cfg: &Settings, request: &str, selected_agent: Option<&str>) -> Result<String> {
     let request = request.trim();
     if request.is_empty() {
         bail!("empty delegation request");
     }
     // The Settings choice wins over the tracked registry, which is always
     // present in a source checkout.
+    let routed = cfg.for_delegation_agent(selected_agent)?;
+    let cfg = routed.as_ref().unwrap_or(cfg);
     if cfg.brain_source == "acpx" {
         return crate::acpx::delegate(app, cfg, request);
     }
-    if acp::configured() {
+    if cfg.brain_source == "acp" {
+        let provider = cfg.acpx_agent.trim();
+        return acp::delegate(request, (!provider.is_empty()).then_some(provider))
+            .map(|answer| squash(&answer));
+    }
+    // Preserve the pre-profile provider-registry behaviour for legacy configs.
+    if selected_agent.is_none() && acp::configured() {
         return acp::delegate(request, None).map(|answer| squash(&answer));
     }
     let target = resolve_target(app, cfg)?;

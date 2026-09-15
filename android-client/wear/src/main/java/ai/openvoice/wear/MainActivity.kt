@@ -9,6 +9,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.InputType
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -22,6 +23,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import kotlin.math.abs
 
 class MainActivity : ComponentActivity() {
     private lateinit var store: SecureNodeStore
@@ -32,6 +34,8 @@ class MainActivity : ComponentActivity() {
     private var active = false
     private var showingTasks = false
     private var voiceStatus = "Tap to talk"
+    private var agents: List<NodeAgent> = emptyList()
+    private var selectedAgentId: String? = null
     private val delegations = LinkedHashMap<String, DelegationStatus>()
 
     private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -53,7 +57,11 @@ class MainActivity : ComponentActivity() {
             setBackgroundColor(BACKGROUND)
             addView(container, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         })
-        if (store.load() == null) showPairingScreen() else showTalkScreen()
+        val saved = store.load()
+        if (saved == null) showPairingScreen() else {
+            showTalkScreen()
+            refreshAgents(saved)
+        }
     }
 
     // This is a short, node-issued pairing secret rather than an account
@@ -140,11 +148,26 @@ class MainActivity : ComponentActivity() {
             }
             contentDescription = if (active || starting) "Stop talking" else "Start talking"
             setOnClickListener { if (active || starting) stopVoice() else requestTalk() }
+            var swipeStart = 0f
+            setOnTouchListener { view, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> { swipeStart = event.rawX; true }
+                    MotionEvent.ACTION_UP -> {
+                        val distance = event.rawX - swipeStart
+                        if (abs(distance) > dp(28)) cycleAgent(if (distance < 0) 1 else -1)
+                        else view.performClick()
+                        true
+                    }
+                    else -> true
+                }
+            }
         }
         container.addView(talk, LinearLayout.LayoutParams(dp(112), dp(112)).apply {
             gravity = Gravity.CENTER_HORIZONTAL
             topMargin = dp(14)
         })
+        container.addView(caption(currentAgentAlias()).apply { textSize = 12f; setTextColor(Color.WHITE) }, match(dp(3)))
+        if (agents.size > 1) container.addView(caption("Swipe orb to change agent").apply { textSize = 9f }, match(dp(1)))
         container.addView(status, match(dp(12)))
         if (delegations.isNotEmpty()) {
             val running = delegations.values.count { it.state == DelegationStatus.State.RUNNING }
@@ -227,7 +250,8 @@ class MainActivity : ComponentActivity() {
                 if (client !== newClient || isFinishing || isDestroyed) return@runOnUiThread
                 result.fold(
                     onSuccess = { settings ->
-                        val session = VoiceSession(this, newClient, settings, ::onVoiceEvent, ::onDelegationEvent)
+                        applyAgents(settings.agents)
+                        val session = VoiceSession(this, newClient, settings, { selectedAgentId }, ::onVoiceEvent, ::onDelegationEvent)
                         voiceSession = session
                         session.start()
                     },
@@ -245,6 +269,37 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    private fun refreshAgents(node: SavedNode) {
+        val probe = NodeClient(node.url, node.accessToken, node.trustSelfSigned)
+        probe.settings { result ->
+            runOnUiThread {
+                result.onSuccess { applyAgents(it.agents); if (!active && !starting) showTalkScreen() }
+                probe.close()
+            }
+        }
+    }
+
+    private fun applyAgents(incoming: List<NodeAgent>) {
+        agents = incoming
+        if (agents.isEmpty()) { selectedAgentId = null; return }
+        val saved = store.selectedAgent()?.first
+        val selected = agents.find { it.id == saved } ?: agents.first()
+        selectedAgentId = selected.id
+        store.selectAgent(selected.id, selected.alias)
+    }
+
+    private fun currentAgentAlias(): String = agents.find { it.id == selectedAgentId }?.alias
+        ?: store.selectedAgent()?.second ?: "Agent"
+
+    private fun cycleAgent(delta: Int) {
+        if (agents.size < 2) return
+        val current = agents.indexOfFirst { it.id == selectedAgentId }.coerceAtLeast(0)
+        val selected = agents[(current + delta + agents.size) % agents.size]
+        selectedAgentId = selected.id
+        store.selectAgent(selected.id, selected.alias)
+        showTalkScreen()
     }
 
     private fun onVoiceEvent(state: VoiceSession.State, detail: String?) = runOnUiThread {

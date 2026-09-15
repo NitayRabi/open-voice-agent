@@ -14,6 +14,12 @@ The voice model has exactly one tool, `delegate_task`. When you want something
 actually *done* (a calculation, a lookup, a plan, code, a decision), it hands the
 task to the brain and speaks back the answer.
 
+The Delegation tab can hold multiple named agent profiles. Each profile has a
+complete capable-backend configuration (ACP/acpx, remote endpoint, or local
+model), while the conversational voice and STS stack stay shared. Desktop,
+Android, and Wear OS keep their own current selection and attach its stable ID
+to each delegation, so changing agents does not reconnect the voice session.
+
 ```
  bubble window ─┐                 ws://…/v1/realtime     ┌─ speech-to-speech serve ─┐
  browser  /     ├─ VoicePipeline ───────────────────────▶│  VAD · STT · LLM · TTS    │
@@ -98,7 +104,7 @@ HTTPS (or an SSH tunnel that makes it `localhost`). The tray has an **Open web
 UI** item; the *Web* tab has an **Open web UI** button.
 
 API surface (all also require the token if set):
-`GET/POST /api/settings`, `POST /api/delegate {request}`, `GET /api/version`,
+`GET/POST /api/settings`, `POST /api/delegate {request, agent_id?}`, `GET /api/version`,
 `GET /api/acpx/status`, `POST /api/acpx/install`, `POST /api/acpx/install_agent {id}`,
 `GET|POST /api/backend/status|start|stop`, `GET /api/models` +
 `POST /api/models/{add,download,cancel,remove,forget}`,

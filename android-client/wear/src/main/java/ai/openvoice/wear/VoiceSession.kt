@@ -36,6 +36,7 @@ class VoiceSession(
     private val context: Context,
     private val node: NodeClient,
     private val settings: NodeSettings,
+    private val selectedAgentId: () -> String?,
     private val event: (State, String?) -> Unit,
     private val delegationEvent: (DelegationStatus) -> Unit = {},
 ) {
@@ -283,7 +284,8 @@ class VoiceSession(
         responseActive = true
         socket?.send(JSONObject().put("type", "response.create").toString())
         event(State.THINKING, "Handing off…")
-        node.delegate(request) { result ->
+        val agentId = selectedAgentId()
+        node.delegate(request, agentId) { result ->
             delegationEvent(
                 result.fold(
                     onSuccess = { DelegationStatus(taskId, taskRequest, DelegationStatus.State.SUCCEEDED, it) },
@@ -295,7 +297,8 @@ class VoiceSession(
                 onSuccess = { "The delegated task is complete. The agent answered: $it. Relay the result in one or two natural spoken sentences." },
                 onFailure = { "The delegated task failed: ${it.message}. Let me know briefly." },
             )
-            if (settings.speakDelegatedResult || result.isFailure) synchronized(reports) { reports.add(report) }
+            val speak = settings.agents.find { it.id == agentId }?.speakDelegatedResult ?: settings.speakDelegatedResult
+            if (speak || result.isFailure) synchronized(reports) { reports.add(report) }
             flushReport()
         }
     }

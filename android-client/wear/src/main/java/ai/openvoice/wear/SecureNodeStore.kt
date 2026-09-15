@@ -42,11 +42,21 @@ class SecureNodeStore(context: Context) {
 
     fun clear() = preferences.edit().clear().apply()
 
+    fun selectedAgent(): Pair<String, String>? {
+        val id = preferences.getString(AGENT_ID, null)?.takeIf { it.isNotBlank() } ?: return null
+        return id to preferences.getString(AGENT_ALIAS, "Agent").orEmpty()
+    }
+
+    fun selectAgent(id: String, alias: String) = preferences.edit()
+        .putString(AGENT_ID, id).putString(AGENT_ALIAS, alias).apply()
+
     private companion object {
         const val URL = "url"
         // The reusable/manual pairing code is deliberately never persisted.
         const val ACCESS_TOKEN = "access_token"
         const val LEGACY_PAIRING_CODE = "pairing_code"
+        const val AGENT_ID = "agent_id"
+        const val AGENT_ALIAS = "agent_alias"
         const val TRUST = "trust_self_signed"
     }
 }

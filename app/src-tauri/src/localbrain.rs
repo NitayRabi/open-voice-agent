@@ -64,6 +64,10 @@ impl LocalBrain {
     /// Make sure the server is up before a delegation; returns once the port
     /// answers or errors out.
     pub fn ensure(&self, app: &AppHandle, cfg: &Settings) -> Result<(), String> {
+        let matches = self.running_sig.lock().as_ref().map(|running| running.brain_local_eq(cfg)).unwrap_or(false);
+        if !matches && self.is_running() {
+            self.stop(app);
+        }
         if !self.is_running() {
             self.start(app, cfg)?;
         }

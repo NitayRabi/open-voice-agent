@@ -6,6 +6,7 @@ import { element } from "./lib/dom.js";
 import { ensureVoiceBackend, keepVoiceBackendAlive } from "./lib/backend-lifecycle.js";
 import { errorText } from "./lib/errors.js";
 import type { PipelineState, TranscriptDetail } from "./lib/types.js";
+import { AgentSelection } from "./lib/agent-selection.js";
 
 const orb = element("orb");
 const caption = element("caption");
@@ -13,6 +14,7 @@ const notice = element("notice");
 const feed = element("transcript");
 const visual = new StormOrb(orb);
 const taskToast = new TaskToast();
+const agentSelection = new AgentSelection(element("agent-switch") as HTMLButtonElement);
 
 const CAPTIONS: Record<PipelineState, string> = {
   idle: "tap to talk",
@@ -26,13 +28,15 @@ const CAPTIONS: Record<PipelineState, string> = {
 };
 
 const pipeline = new VoicePipeline({
-  delegate: (r) => delegate(r),
+  delegate: (r) => delegate(r, agentSelection.currentId()),
+  shouldSpeakDelegatedResult: () => agentSelection.speakResult(true),
   ensureBackend: ensureVoiceBackend,
   backendActivity: keepVoiceBackendAlive,
 });
 
 async function loadSettings(): Promise<void> {
   const settings = await getSettings();
+  agentSelection.configure(settings);
   if (!settings.setup_completed) {
     location.replace("/settings?setup=1");
     return;

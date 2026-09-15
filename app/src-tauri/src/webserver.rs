@@ -569,6 +569,9 @@ fn browser_settings(req: &Request, cfg: &Settings) -> Settings {
     // by reading the reusable pairing code back out of settings.
     out.web_token.clear();
     out.brain_api_key.clear();
+    for agent in &mut out.delegation_agents {
+        agent.brain_api_key.clear();
+    }
     out.speech_remote_api_key.clear();
     out.hf_token.clear();
     for (key, value) in &mut out.launch_env {
@@ -769,11 +772,21 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
             let incoming = body.get("settings").cloned().unwrap_or(body);
             match serde_json::from_value::<Settings>(incoming) {
                 Ok(mut new) => {
+                    if let Err(error) = new.validate_delegation_agents() {
+                        return void_respond(req, json_response(json!({"error": error.to_string()}), 400));
+                    }
                     // HTTP settings receive redacted secrets; preserve their
                     // existing values on a blank round-trip. Desktop IPC can
                     // still intentionally clear them.
                     if new.web_token.is_empty() { new.web_token = cfg.web_token.clone(); }
                     if new.brain_api_key.is_empty() { new.brain_api_key = cfg.brain_api_key.clone(); }
+                    for agent in &mut new.delegation_agents {
+                        if agent.brain_api_key.is_empty() {
+                            if let Some(previous) = cfg.delegation_agents.iter().find(|old| old.id == agent.id) {
+                                agent.brain_api_key = previous.brain_api_key.clone();
+                            }
+                        }
+                    }
                     if new.speech_remote_api_key.is_empty() { new.speech_remote_api_key = cfg.speech_remote_api_key.clone(); }
                     if new.hf_token.is_empty() { new.hf_token = cfg.hf_token.clone(); }
                     let web_changed = !cfg.web_config_eq(&new);
@@ -807,10 +820,11 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
         (Method::Post, "/api/delegate") => {
             let body = read_body(&mut req);
             let request = body.get("request").and_then(Value::as_str).unwrap_or_default();
+            let agent_id = body.get("agent_id").and_then(Value::as_str);
             if !cfg.delegation_enabled {
                 req.respond(json_response(json!({ "error": "delegation disabled" }), 400))
             } else {
-                match brain::delegate(app, &cfg, request) {
+                match brain::delegate(app, &cfg, request, agent_id) {
                     Ok(answer) => req.respond(json_response(json!({ "answer": answer }), 200)),
                     Err(e) => req.respond(json_response(json!({ "error": e.to_string() }), 502)),
                 }

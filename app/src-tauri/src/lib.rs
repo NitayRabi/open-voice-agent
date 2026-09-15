@@ -62,6 +62,7 @@ fn save_settings(
     mut settings: Settings,
 ) -> Result<(), String> {
     settings.server_url = config::local_server_url();
+    settings.validate_delegation_agents().map_err(|e| e.to_string())?;
     if settings.web_enabled
         && settings.web_bind.trim() != "127.0.0.1"
         && settings.web_token.trim().is_empty()
@@ -136,12 +137,13 @@ async fn delegate(
     app: AppHandle,
     state: State<'_, AppState>,
     request: String,
+    agent_id: Option<String>,
 ) -> Result<String, String> {
     let cfg = state.settings.lock().clone();
     if !cfg.delegation_enabled {
         return Err("delegation is disabled in settings".into());
     }
-    tauri::async_runtime::spawn_blocking(move || brain::delegate(&app, &cfg, &request))
+    tauri::async_runtime::spawn_blocking(move || brain::delegate(&app, &cfg, &request, agent_id.as_deref()))
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())

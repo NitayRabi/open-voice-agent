@@ -21,9 +21,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var code: EditText
     private lateinit var status: TextView
     private lateinit var orb: OrbView
+    private lateinit var agentButton: Button
     private lateinit var trustSelfSigned: CheckBox
     private lateinit var store: SecureNodeStore
     private var enableOverlayAfterPermission = false
+    private var agents: List<NodeAgent> = emptyList()
+    private var selectedAgentId: String? = null
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -46,17 +49,20 @@ class MainActivity : AppCompatActivity() {
         }
         status = TextView(this).apply { text = if (saved == null) "Pair with your remote node" else "Paired — tap to talk"; setTextColor(Color.rgb(174,184,202)); textSize = 15f; gravity = Gravity.CENTER }
         orb = OrbView(this).apply { layoutParams = LinearLayout.LayoutParams(dp(190), dp(190)).also { it.gravity = Gravity.CENTER_HORIZONTAL }; setOnClickListener { startVoice(false) } }
+        agentButton = Button(this).apply { text = saved?.let { store.selectedAgent()?.second } ?: "Agent"; isAllCaps = false; setOnClickListener { cycleAgent() } }
+        val orbRow = LinearLayout(this).apply { gravity = Gravity.CENTER; addView(orb); addView(agentButton, LinearLayout.LayoutParams(dp(92), ViewGroup.LayoutParams.WRAP_CONTENT)) }
         val connect = Button(this).apply { text = "Connect"; setOnClickListener { startVoice(false) } }
         val floating = Button(this).apply { text = "Enable floating orb"; setOnClickListener { startVoice(true) } }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(dp(28), dp(36), dp(28), dp(24)); setBackgroundColor(Color.rgb(9,11,18))
             addView(TextView(this@MainActivity).apply { text = "Open Voice Agent"; textSize = 28f; setTextColor(Color.WHITE); gravity = Gravity.CENTER; setPadding(0,0,0,dp(10)) }, match())
             addView(TextView(this@MainActivity).apply { text = "A remote-only Android client"; textSize = 14f; setTextColor(Color.rgb(130,145,176)); gravity = Gravity.CENTER }, match())
-            addView(orb); addView(status, match()); addView(url, match(dp(14))); addView(code, match(dp(10))); addView(trustSelfSigned, match(dp(8))); addView(connect, match(dp(12))); addView(floating, match(dp(8)))
+            addView(orbRow); addView(status, match()); addView(url, match(dp(14))); addView(code, match(dp(10))); addView(trustSelfSigned, match(dp(8))); addView(connect, match(dp(12))); addView(floating, match(dp(8)))
             addView(TextView(this@MainActivity).apply { text = "The node URL is the web-client URL (for example https://voice.example.com). No server or model runs on this phone."; textSize = 13f; setTextColor(Color.rgb(121,131,151)); setPadding(4,dp(18),4,0) }, match())
         }
         setContentView(ScrollView(this).apply { addView(content) })
         requestRuntimePermissions()
+        if (saved != null) loadAgents(saved)
     }
 
     private fun field(hintText: String, value: String) = EditText(this).apply {
@@ -79,6 +85,7 @@ class MainActivity : AppCompatActivity() {
                             store.save(SavedNode(cleanUrl, it.accessToken, it.deviceId, trustSelfSigned.isChecked))
                             code.setText("")
                             status.text = "Paired"
+                            loadAgents(store.load()!!)
                             launchVoice(withOverlay)
                         },
                         onFailure = { status.text = it.message ?: "Pairing failed" },
@@ -99,6 +106,32 @@ class MainActivity : AppCompatActivity() {
         val action = if (withOverlay) VoiceService.ACTION_SHOW else VoiceService.ACTION_TOGGLE
         ContextCompat.startForegroundService(this, Intent(this, VoiceService::class.java).setAction(action))
         status.text = if (withOverlay) "Floating orb enabled" else "connecting"
+    }
+
+    private fun loadAgents(saved: SavedNode) {
+        NodeClient(saved.url, saved.credential, saved.trustSelfSigned).settings { result ->
+            result.onSuccess { cfg -> runOnUiThread { applyAgents(cfg.agents) } }
+        }
+    }
+
+    private fun applyAgents(incoming: List<NodeAgent>) {
+        agents = incoming
+        if (agents.isEmpty()) { selectedAgentId = null; agentButton.text = "Agent"; agentButton.isEnabled = false; return }
+        val savedId = store.selectedAgent()?.first
+        val selected = agents.find { it.id == savedId } ?: agents.first()
+        selectedAgentId = selected.id
+        store.selectAgent(selected.id, selected.alias)
+        agentButton.text = selected.alias
+        agentButton.isEnabled = agents.size > 1
+    }
+
+    private fun cycleAgent() {
+        if (agents.size < 2) return
+        val index = agents.indexOfFirst { it.id == selectedAgentId }.coerceAtLeast(0)
+        val selected = agents[(index + 1) % agents.size]
+        selectedAgentId = selected.id
+        store.selectAgent(selected.id, selected.alias)
+        agentButton.text = selected.alias
     }
 
     private fun showOverlayHelp() {
