@@ -63,10 +63,11 @@ task to the brain and speaks back the answer.
   acknowledges instantly ("on it"), calls the brain off the critical path, then
   feeds the answer back so the voice model speaks it. Toggle
   *speak the result* off for a bare ack.
-- **Automatic engine lifecycle** — after setup, the app starts the fixed speech
-  backend when it opens and stops it when it quits. Enable **Launch Open Voice
-  Agent when I log in** to register the app with the OS; the managed backend then
-  starts at login as well. `manage_backend`, `launch_command`, `launch_cwd`, and
+- **Automatic engine lifecycle** — the app demand-starts the fixed speech
+  backend when a voice session opens, keeps it warm while the session is active,
+  and stops it after three idle minutes (or immediately when the app quits).
+  Enable **Launch Open Voice Agent when I log in** to register only the lightweight
+  app shell with the OS. `manage_backend`, `launch_command`, `launch_cwd`, and
   `launch_env` in `config.json` can also supervise a custom server command.
 - **Models** — download GGUF weights on demand (nothing ships in the installer);
   see [What ships vs. what you download](#what-ships-vs-what-you-download).
@@ -215,7 +216,7 @@ The app and DMG are written below
 macOS microphone permission description, so macOS can prompt on first use.
 
 Nothing Python/MLX-related needs to be prepared before building. The first time
-the voice engine is started (from first-run Setup, or `manage_backend`), the
+the voice engine is started (from first-run Setup or opening a voice session), the
 app installs whatever it's missing on its own, with progress in Settings → Log:
 a standalone `uv` (which fetches its own Python 3.12 — no system Python
 needed), the pinned `speech-to-speech` checkout under `.tmp/`, its Python env

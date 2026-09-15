@@ -3,6 +3,7 @@ import { getSettings, delegate, listen, emit, invoke, currentWindow, hasTauri } 
 import { StormOrb } from "./lib/storm-orb.js";
 import { TaskToast } from "./lib/task-toast.js";
 import { element } from "./lib/dom.js";
+import { ensureVoiceBackend, keepVoiceBackendAlive } from "./lib/backend-lifecycle.js";
 import type { PipelineState, Settings } from "./lib/types.js";
 
 const orb = element("orb");
@@ -24,6 +25,8 @@ const CAPTIONS: Record<PipelineState, string> = {
 
 const pipeline = new VoicePipeline({
   delegate: (request) => delegate(request),
+  ensureBackend: ensureVoiceBackend,
+  backendActivity: keepVoiceBackendAlive,
 });
 
 async function loadSettings(): Promise<Settings> {

@@ -5,7 +5,11 @@
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 use parking_lot::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
@@ -14,11 +18,42 @@ use crate::config::Settings;
 use crate::runtime::has_speech_runtime;
 use crate::AppState;
 
-#[derive(Default)]
 pub struct BackendManager {
     child: Mutex<Option<Child>>,
+    /// Serializes spawn and stop so concurrent desktop/web requests cannot
+    /// launch duplicate stacks or race a shutdown.
+    launch_lock: Mutex<()>,
     /// guards against two overlapping automatic runtime installs
     installing: AtomicBool,
+    /// Last signal from an active voice client, as Unix epoch milliseconds.
+    last_activity_ms: AtomicU64,
+    /// The watchdog is intentionally one thread for the lifetime of the app.
+    watchdog_started: AtomicBool,
+}
+
+const IDLE_TIMEOUT: Duration = Duration::from_secs(3 * 60);
+const WATCHDOG_INTERVAL: Duration = Duration::from_secs(5);
+const TERMINATE_GRACE: Duration = Duration::from_secs(5);
+
+impl Default for BackendManager {
+    fn default() -> Self {
+        Self {
+            child: Mutex::new(None),
+            launch_lock: Mutex::new(()),
+            installing: AtomicBool::new(false),
+            last_activity_ms: AtomicU64::new(now_ms()),
+            watchdog_started: AtomicBool::new(false),
+        }
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
 }
 
 fn looks_like_repo(p: &std::path::Path) -> bool {
@@ -87,6 +122,12 @@ impl BackendManager {
         match guard.as_mut() {
             Some(c) => match c.try_wait() {
                 Ok(Some(_)) => {
+                    #[cfg(unix)]
+                    unsafe {
+                        // The supervisor normally cleans its group via its EXIT
+                        // trap. Cover an abnormal supervisor exit as well.
+                        libc::kill(-(c.id() as i32), libc::SIGKILL);
+                    }
                     *guard = None;
                     false
                 }
@@ -98,8 +139,9 @@ impl BackendManager {
     }
 
     pub fn start(&self, app: &AppHandle, cfg: &Settings) -> Result<(), String> {
+        self.touch(app);
         if self.is_running() {
-            return Err("backend already running".into());
+            return Ok(());
         }
         if cfg.launch_command.is_empty() {
             return Err("launch_command is empty".into());
@@ -191,8 +233,10 @@ impl BackendManager {
     }
 
     fn spawn_process(&self, app: &AppHandle, cfg: &Settings) -> Result<(), String> {
+        let _launch = self.launch_lock.lock();
         if self.is_running() {
-            return Err("backend already running".into());
+            self.touch(app);
+            return Ok(());
         }
         let mut parts = cfg.launch_command.iter();
         let program = parts.next().ok_or("launch_command is empty")?;
@@ -208,6 +252,24 @@ impl BackendManager {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // The launcher and every model process it creates share a dedicated
+        // process group. This lets shutdown reach the whole voice stack, while
+        // still giving Bash's cleanup trap a chance to reap its children.
+        #[cfg(unix)]
+        cmd.process_group(0);
+        #[cfg(target_os = "linux")]
+        // If the desktop process crashes or is SIGKILLed, ask the kernel to
+        // terminate Bash. Bash can then run the same cleanup trap it uses for
+        // normal app shutdown instead of leaving GPU workers orphaned.
+        unsafe {
+            cmd.pre_exec(|| {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) == 0 {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::last_os_error())
+                }
+            });
+        }
         for (k, v) in &cfg.launch_env {
             cmd.env(k, v);
         }
@@ -215,7 +277,9 @@ impl BackendManager {
             if cfg.speech_remote_base_url.trim().is_empty()
                 || cfg.speech_remote_model.trim().is_empty()
             {
-                return Err("remote conversational model requires an endpoint and model name".into());
+                return Err(
+                    "remote conversational model requires an endpoint and model name".into(),
+                );
             }
             cmd.env("HF_S2S_LLM_BASE_URL", cfg.speech_remote_base_url.trim());
             cmd.env("HF_S2S_LLM_NAME", cfg.speech_remote_model.trim());
@@ -267,19 +331,110 @@ impl BackendManager {
 
         let _ = app.emit(
             "backend-log",
-            format!("[app] launched: {} (cwd {})", cfg.launch_command.join(" "), cwd.display()),
+            format!(
+                "[app] launched: {} (cwd {})",
+                cfg.launch_command.join(" "),
+                cwd.display()
+            ),
         );
         *self.child.lock() = Some(child);
+        self.touch(app);
         let _ = app.emit("backend-status", true);
         Ok(())
     }
 
+    /// Record that a voice UI is warming or actively using the engine.
+    pub fn touch(&self, app: &AppHandle) {
+        self.last_activity_ms.store(now_ms(), Ordering::SeqCst);
+        if self
+            .watchdog_started
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            let app = app.clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(WATCHDOG_INTERVAL);
+                let state = app.state::<AppState>();
+                if !state.backend.is_running() {
+                    continue;
+                }
+                let idle_ms =
+                    now_ms().saturating_sub(state.backend.last_activity_ms.load(Ordering::SeqCst));
+                if idle_ms >= IDLE_TIMEOUT.as_millis() as u64 {
+                    let _ = app.emit(
+                        "backend-log",
+                        "[app] voice engine idle for 3 minutes; releasing GPU memory".to_string(),
+                    );
+                    state.backend.stop(&app);
+                }
+            });
+        }
+    }
+
+    /// Cheap health probe used while the UI displays its warming state.
+    pub fn is_ready(&self, health_url: &str) -> bool {
+        if !self.is_running() {
+            return false;
+        }
+        match ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_millis(400))
+            .timeout_read(Duration::from_millis(400))
+            .build()
+            .get(health_url)
+            .call()
+        {
+            Ok(_) | Err(ureq::Error::Status(_, _)) => true,
+            Err(ureq::Error::Transport(_)) => false,
+        }
+    }
+
     pub fn stop(&self, app: &AppHandle) {
-        if let Some(mut child) = self.child.lock().take() {
-            let _ = child.kill();
-            let _ = child.wait();
+        let _launch = self.launch_lock.lock();
+        if let Some(child) = self.child.lock().take() {
+            terminate_tree(child);
             let _ = app.emit("backend-log", "[app] backend stopped".to_string());
         }
         let _ = app.emit("backend-status", false);
+    }
+}
+
+fn terminate_tree(mut child: Child) {
+    #[cfg(unix)]
+    {
+        let process_group = -(child.id() as i32);
+        // SAFETY: kill(2) is called with a process-group id created by
+        // CommandExt::process_group above and constant, valid signals.
+        unsafe {
+            libc::kill(process_group, libc::SIGTERM);
+        }
+        let deadline = std::time::Instant::now() + TERMINATE_GRACE;
+        let mut leader_reaped = false;
+        while std::time::Instant::now() < deadline {
+            if !leader_reaped {
+                leader_reaped = matches!(child.try_wait(), Ok(Some(_)));
+            }
+            // Signal 0 checks the entire group. Do not stop merely because the
+            // Bash leader exited: a stubborn model worker may still own VRAM.
+            let group_exists = unsafe { libc::kill(process_group, 0) == 0 };
+            if !group_exists {
+                if !leader_reaped {
+                    let _ = child.wait();
+                }
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        unsafe {
+            libc::kill(process_group, libc::SIGKILL);
+        }
+        if !leader_reaped {
+            let _ = child.wait();
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }

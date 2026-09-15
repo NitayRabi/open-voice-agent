@@ -3,6 +3,7 @@ import { getSettings, delegate, listen } from "./lib/tauri.js";
 import { StormOrb } from "./lib/storm-orb.js";
 import { TaskToast } from "./lib/task-toast.js";
 import { element } from "./lib/dom.js";
+import { ensureVoiceBackend, keepVoiceBackendAlive } from "./lib/backend-lifecycle.js";
 import { errorText } from "./lib/errors.js";
 import type { PipelineState, TranscriptDetail } from "./lib/types.js";
 
@@ -24,7 +25,11 @@ const CAPTIONS: Record<PipelineState, string> = {
   error: "disconnected — tap to retry",
 };
 
-const pipeline = new VoicePipeline({ delegate: (r) => delegate(r) });
+const pipeline = new VoicePipeline({
+  delegate: (r) => delegate(r),
+  ensureBackend: ensureVoiceBackend,
+  backendActivity: keepVoiceBackendAlive,
+});
 
 async function loadSettings(): Promise<void> {
   const settings = await getSettings();

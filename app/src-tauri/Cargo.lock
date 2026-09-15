@@ -2516,6 +2516,7 @@ dependencies = [
  "anyhow",
  "hex",
  "include_dir",
+ "libc",
  "parking_lot",
  "rand 0.8.8",
  "serde",

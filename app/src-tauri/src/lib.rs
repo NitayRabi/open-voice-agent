@@ -90,10 +90,13 @@ fn save_settings(
         apply_web(&app);
     }
     if backend_changed {
-        if state.backend.is_running() {
+        let was_running = state.backend.is_running();
+        if was_running {
             state.backend.stop(&app);
         }
-        if manage_backend {
+        // Apply changed engine settings immediately only to an engine that was
+        // already in use. An idle engine remains unloaded until voice opens.
+        if manage_backend && was_running {
             let cfg = state.settings.lock().clone();
             state.backend.start(&app, &cfg)?;
         }
@@ -154,6 +157,17 @@ fn backend_stop(app: AppHandle, state: State<'_, AppState>) {
 #[tauri::command]
 fn backend_running(state: State<'_, AppState>) -> bool {
     state.backend.is_running()
+}
+
+#[tauri::command]
+fn backend_ready(state: State<'_, AppState>) -> bool {
+    let health_url = state.settings.lock().health_url.clone();
+    state.backend.is_ready(&health_url)
+}
+
+#[tauri::command]
+fn backend_touch(app: AppHandle, state: State<'_, AppState>) {
+    state.backend.touch(&app);
 }
 
 #[tauri::command]
@@ -324,6 +338,8 @@ pub fn run() {
             backend_start,
             backend_stop,
             backend_running,
+            backend_ready,
+            backend_touch,
             web_start,
             web_stop,
             web_url,
@@ -344,7 +360,6 @@ pub fn run() {
             let handle = app.handle().clone();
             let settings = Settings::load(&handle);
             let hk = settings.hotkey.clone();
-            let manage_backend = settings.manage_backend;
             let app_autostart = settings.app_autostart;
 
             let web_enabled = settings.web_enabled;
@@ -375,14 +390,6 @@ pub fn run() {
                 open_settings(&handle);
                 if let Some(bubble) = app.get_webview_window("bubble") {
                     let _ = bubble.hide();
-                }
-            }
-
-            if manage_backend {
-                let state = handle.state::<AppState>();
-                let cfg = state.settings.lock().clone();
-                if let Err(e) = state.backend.start(&handle, &cfg) {
-                    eprintln!("[backend] autostart failed: {e}");
                 }
             }
 

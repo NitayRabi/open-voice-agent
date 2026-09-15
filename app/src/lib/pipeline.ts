@@ -55,6 +55,10 @@ export interface PipelineOptions {
   delegate?: (request: string) => Promise<string>;
   /** Directory holding the audio worklets; defaults to `../worklets/`. */
   workletBase?: string | URL;
+  /** Demand-start a managed backend and resolve once it is ready. */
+  ensureBackend?: (settings: Settings) => Promise<void>;
+  /** Heartbeat that prevents idle shutdown while this session is active. */
+  backendActivity?: (settings: Settings) => void;
 }
 
 /** `detail` payload of each event the pipeline dispatches. */
@@ -88,6 +92,7 @@ export class VoicePipeline extends EventTarget {
   private _responseActive = false;
   private _queuedAgentReports: string[] = [];
   private _nextTaskId = 1;
+  private _backendHeartbeat: ReturnType<typeof setInterval> | null = null;
 
   constructor(opts: PipelineOptions = {}) {
     super();
@@ -135,6 +140,7 @@ export class VoicePipeline extends EventTarget {
   private _setState(s: PipelineState): void {
     if (this.state === s) return;
     this.state = s;
+    if (s === "error") this._stopBackendHeartbeat();
     this._emit("state", { state: s });
     if (s === "listening") this._flushAgentReport();
   }
@@ -167,6 +173,8 @@ export class VoicePipeline extends EventTarget {
     this._reconnects = 0;
     this._setState("connecting");
     try {
+      await this.opts.ensureBackend?.(this._cfg);
+      this._startBackendHeartbeat();
       await this._setupAudio();
       await this._connectRealtime();
     } catch (e) {
@@ -179,6 +187,7 @@ export class VoicePipeline extends EventTarget {
 
   stop(): void {
     this._closing = true;
+    this._stopBackendHeartbeat();
     try {
       this._ws?.close();
     } catch {}
@@ -195,6 +204,20 @@ export class VoicePipeline extends EventTarget {
     if (this._ctx && this._ctx.state !== "closed") void this._ctx.close();
     this._ctx = null;
     this._setState("idle");
+  }
+
+  private _startBackendHeartbeat(): void {
+    if (!this.opts.backendActivity) return;
+    this.opts.backendActivity(this._cfg);
+    this._backendHeartbeat = setInterval(
+      () => this.opts.backendActivity?.(this._cfg),
+      30_000,
+    );
+  }
+
+  private _stopBackendHeartbeat(): void {
+    if (this._backendHeartbeat !== null) clearInterval(this._backendHeartbeat);
+    this._backendHeartbeat = null;
   }
 
   // ── audio graph ─────────────────────────────────────────────────────────

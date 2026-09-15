@@ -863,6 +863,14 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
             json!({ "running": app.state::<AppState>().backend.is_running() }),
             200,
         )),
+        (_, "/api/backend/ready") if is_get => {
+            let st = app.state::<AppState>();
+            let health_url = st.settings.lock().health_url.clone();
+            req.respond(json_response(
+                json!({ "ready": st.backend.is_ready(&health_url) }),
+                200,
+            ))
+        },
         (Method::Post, "/api/backend/start") => {
             if !privileged(&req, &access) {
                 return void_respond(req, json_response(json!({"error":"backend can only be controlled locally or with the admin token"}), 403));
@@ -879,6 +887,10 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
                 return void_respond(req, json_response(json!({"error":"backend can only be controlled locally or with the admin token"}), 403));
             }
             app.state::<AppState>().backend.stop(app);
+            req.respond(json_response(json!({ "ok": true }), 200))
+        }
+        (Method::Post, "/api/backend/touch") => {
+            app.state::<AppState>().backend.touch(app);
             req.respond(json_response(json!({ "ok": true }), 200))
         }
         (Method::Post, "/api/emit") => {
