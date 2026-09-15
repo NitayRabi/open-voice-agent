@@ -2510,6 +2510,7 @@ dependencies = [
  "anyhow",
  "hex",
  "include_dir",
+ "libc",
  "parking_lot",
  "rand",
  "serde",

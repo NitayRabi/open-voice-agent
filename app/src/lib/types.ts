@@ -35,7 +35,7 @@ export interface Settings {
   /** Noise-gate threshold in dB; -100 means "off". */
   noise_gate_db: number;
   autostart_listening: boolean;
-  /** Register the app to launch at login; the managed backend starts with it. */
+  /** Register the lightweight app shell to launch at login. */
   app_autostart: boolean;
 
   // ── delegation to the "brain" ──────────────────────────────────

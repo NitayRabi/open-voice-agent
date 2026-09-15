@@ -162,8 +162,8 @@ pub struct Settings {
     /// Start listening automatically as soon as the backend is reachable.
     #[serde(default)]
     pub autostart_listening: bool,
-    /// Register the Tauri app to launch when the user logs in. When
-    /// `manage_backend` is also enabled, the configured server starts with it.
+    /// Register the Tauri app to launch when the user logs in. The voice engine
+    /// remains demand-loaded even when the app itself starts automatically.
     #[serde(default)]
     pub app_autostart: bool,
 

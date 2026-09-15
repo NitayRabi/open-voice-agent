@@ -65,6 +65,8 @@ export interface Commands {
   backend_running: { args: void; result: boolean };
   backend_start: { args: void; result: void };
   backend_stop: { args: void; result: void };
+  backend_ready: { args: void; result: boolean };
+  backend_touch: { args: void; result: void };
   web_start: { args: void; result: string };
   web_stop: { args: void; result: void };
   web_url: { args: void; result: string | null };
@@ -94,6 +96,8 @@ const WEB: WebImpls = {
   backend_running: () => api<{ running: boolean }>("/api/backend/status").then((d) => d.running),
   backend_start: () => api<void>("/api/backend/start", { method: "POST" }),
   backend_stop: () => api<void>("/api/backend/stop", { method: "POST" }),
+  backend_ready: () => api<{ ready: boolean }>("/api/backend/ready").then((d) => d.ready),
+  backend_touch: () => api<void>("/api/backend/touch", { method: "POST" }),
   web_url: () => location.origin + "/",
   show_settings: () => {
     location.href = "/settings";
