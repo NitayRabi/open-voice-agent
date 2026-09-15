@@ -19,6 +19,12 @@ export interface IssuedDeviceCredential {
   device: PairedDevice;
 }
 
+/** Where delegated tasks go: a model (local/remote), or a coding agent over ACP via acpx. */
+export type BrainSource = ModelSource | "acpx";
+
+/** acpx tool-permission policy for the delegated agent. */
+export type AcpxPermissions = "read" | "all" | "none";
+
 /** Lifecycle of the voice pipeline; also the orb's visual state. */
 export type PipelineState =
   | "idle"
@@ -54,7 +60,7 @@ export interface Settings {
 
   // ── delegation to the "brain" ──────────────────────────────────
   delegation_enabled: boolean;
-  brain_source: ModelSource;
+  brain_source: BrainSource;
   brain_base_url: string;
   brain_api_key: string;
   brain_model: string;
@@ -64,6 +70,13 @@ export interface Settings {
   brain_local_port: number;
   brain_local_ctx: number;
   brain_local_ngl: number;
+  /** acpx mode: agent id, "custom", or "" for the first installed agent. */
+  acpx_agent: string;
+  acpx_custom_command: string;
+  acpx_permissions: AcpxPermissions;
+  acpx_model: string;
+  acpx_cwd: string;
+  acpx_bin: string;
   hf_token: string;
   brain_system_prompt: string;
   brain_temperature: number;
@@ -90,6 +103,26 @@ export interface Settings {
   web_tls_key: string;
   web_tailscale: boolean;
   web_tailscale_binary: string;
+}
+
+/** One acpx agent profile and whether it can run here (mirrors `acpx::AgentStatus`). */
+export interface AcpxAgent {
+  id: string;
+  label: string;
+  /** ready = CLI found; npx = adapter fetched on first use; missing = not installed. */
+  status: "ready" | "npx" | "missing";
+  path: string | null;
+  installable: boolean;
+}
+
+export interface AcpxStatus {
+  path: string | null;
+  version: string | null;
+  source: "custom" | "managed" | "system" | "missing";
+  node: string | null;
+  installing: boolean;
+  auto_agent: string | null;
+  agents: AcpxAgent[];
 }
 
 /** Progress of an in-flight download, as reported by `models_list`. */

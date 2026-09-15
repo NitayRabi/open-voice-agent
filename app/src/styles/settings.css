@@ -22,3 +22,10 @@ footer{display:flex;align-items:center;gap:.6rem;padding:.75rem max(1rem,calc((1
 .model-badge.recommended { color: #79dfb2; background: #79dfb212; }
 .model-badge.smallest { color: #a8c7ff; background: #a8c7ff12; }
 .credential-output{padding:.75rem;overflow-wrap:anywhere;border:1px solid hsl(var(--border));border-radius:var(--radius);background:hsla(var(--muted),.45);font-size:.78rem}.credential-output code{user-select:all}.device-row{display:flex;align-items:center;justify-content:space-between;gap:.7rem;padding:.65rem .8rem;border:1px solid hsl(var(--border));border-radius:var(--radius)}.device-row .meta{color:hsl(var(--muted-foreground));font-size:.74rem}
+
+/* acpx delegation: runtime status card and per-agent readiness. */
+.acpx-card { display: flex; flex-direction: column; gap: .6rem; padding: .75rem .85rem; border: 1px solid hsl(var(--border)); border-radius: var(--radius); background: hsla(var(--card), .68); }
+.acpx-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem; font-size: .86rem; }
+.acpx-line span { overflow-wrap: anywhere; }
+.row[hidden] { display: none; }
+.setup-step a { color: hsl(var(--primary)); }

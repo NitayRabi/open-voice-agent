@@ -1,3 +1,4 @@
+mod acpx;
 mod assets;
 mod backend;
 mod brain;
@@ -16,6 +17,7 @@ use tauri::{
     AppHandle, Emitter, Manager, State, WindowEvent,
 };
 
+use crate::acpx::Acpx;
 use crate::assets::AssetManager;
 use crate::backend::BackendManager;
 use crate::config::Settings;
@@ -30,6 +32,7 @@ pub struct AppState {
     assets: AssetManager,
     brain_server: LocalBrain,
     devices: device_access::DeviceRegistry,
+    acpx: Acpx,
 }
 
 #[tauri::command]
@@ -102,6 +105,7 @@ fn save_settings(
         }
     }
     state.brain_server.reconcile(&app);
+    state.acpx.reconcile(&app);
     app.emit("settings-changed", ()).ok();
     Ok(())
 }
@@ -141,6 +145,34 @@ async fn delegate(
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn acpx_status(app: AppHandle, state: State<'_, AppState>) -> acpx::AcpxStatus {
+    let cfg = state.settings.lock().clone();
+    state.acpx.status(&app, &cfg)
+}
+
+#[tauri::command]
+async fn acpx_install(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    let cfg = state.settings.lock().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>()
+            .acpx
+            .ensure(&app, &cfg)
+            .map(|p| p.display().to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn acpx_install_agent(app: AppHandle, id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>().acpx.install_agent(&app, &id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -335,6 +367,9 @@ pub fn run() {
             get_settings,
             save_settings,
             delegate,
+            acpx_status,
+            acpx_install,
+            acpx_install_agent,
             backend_start,
             backend_stop,
             backend_running,
@@ -373,6 +408,7 @@ pub fn run() {
                 assets: AssetManager::default(),
                 brain_server: LocalBrain::default(),
                 devices,
+                acpx: Acpx::default(),
             });
 
             if let Err(e) = hotkey::apply(&handle, &hk) {
@@ -399,6 +435,9 @@ pub fn run() {
                     Err(e) => eprintln!("[web] start failed: {e}"),
                 }
             }
+
+            // Installs acpx in the background when ACP delegation is selected.
+            handle.state::<AppState>().acpx.reconcile(&handle);
 
             if local_brain {
                 let h = handle.clone();

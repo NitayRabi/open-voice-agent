@@ -3,6 +3,7 @@
 // surface either way: invoke / listen / emit.
 
 import type {
+  AcpxStatus,
   AssetProgress,
   ModelsList,
   PairedDevice,
@@ -63,6 +64,9 @@ export interface Commands {
   get_settings: { args: void; result: Settings };
   save_settings: { args: { settings: Settings }; result: void };
   delegate: { args: { request: string }; result: string };
+  acpx_status: { args: void; result: AcpxStatus };
+  acpx_install: { args: void; result: string };
+  acpx_install_agent: { args: { id: string }; result: void };
   app_version: { args: void; result: string };
   backend_running: { args: void; result: boolean };
   backend_start: { args: void; result: void };
@@ -97,6 +101,9 @@ const WEB: WebImpls = {
   save_settings: ({ settings }) => api<void>("/api/settings", { method: "POST", body: { settings } }),
   delegate: ({ request }) =>
     api<{ answer: string }>("/api/delegate", { method: "POST", body: { request } }).then((d) => d.answer),
+  acpx_status: () => api<AcpxStatus>("/api/acpx/status"),
+  acpx_install: () => api<{ path: string }>("/api/acpx/install", { method: "POST" }).then((d) => d.path),
+  acpx_install_agent: ({ id }) => api<void>("/api/acpx/install_agent", { method: "POST", body: { id } }),
   app_version: () => api<{ version: string }>("/api/version").then((d) => d.version),
   backend_running: () => api<{ running: boolean }>("/api/backend/status").then((d) => d.running),
   backend_start: () => api<void>("/api/backend/start", { method: "POST" }),
@@ -140,6 +147,7 @@ export async function invoke<K extends CommandName>(
 export interface AppEvents {
   "backend-log": string;
   "web-status": boolean;
+  "acpx-status": null;
   "asset-progress": AssetProgress;
   "ova-transcript": TranscriptDetail;
   "settings-changed": null;

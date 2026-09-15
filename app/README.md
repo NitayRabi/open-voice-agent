@@ -5,7 +5,10 @@ A Tauri app that wraps the **Hugging Face `speech-to-speech`** approach
 floating desktop bubble. Two models, cleanly split:
 
 - a **conversational voice model** that just talks to you, and
-- a **brain** — one more capable model behind an OpenAI-compatible endpoint.
+- a **brain** — one more capable model behind an OpenAI-compatible endpoint, or
+  a coding agent (Claude Code, Codex, Gemini CLI, …) driven over the
+  [Agent Client Protocol](https://agentclientprotocol.com) through
+  [acpx](https://github.com/openclaw/acpx).
 
 The voice model has exactly one tool, `delegate_task`. When you want something
 actually *done* (a calculation, a lookup, a plan, code, a decision), it hands the
@@ -19,6 +22,7 @@ task to the brain and speaks back the answer.
         │ voice model calls delegate_task(request)
         ▼
    Rust `delegate` ──▶  POST {brain_base_url}/chat/completions   (llama.cpp / vLLM / OpenAI / …)
+        │          └──▶  acpx <agent> exec   (ACP → Claude Code / Codex / Gemini CLI / …)
         │
         ▼  the brain's answer, spoken back into the conversation
 ```
@@ -38,6 +42,7 @@ task to the brain and speaks back the answer.
 | `dist/` | `tsc` output + copied HTML/CSS/assets — what Tauri and the web server serve (git-ignored) |
 | `src-tauri/src/lib.rs` | windows, tray, global hotkey, commands |
 | `src-tauri/src/brain.rs` | delegation: one call to an OpenAI-compatible `/chat/completions` |
+| `src-tauri/src/acpx.rs` | delegation to coding agents over ACP: acpx/agent detection, auto-install, `acpx exec` |
 | `src-tauri/src/assets.rs` | model download manager (resume, verify, progress) |
 | `src-tauri/src/localbrain.rs` | supervises a local `llama-server` on a downloaded GGUF |
 | `src-tauri/assets/catalog.json` | the bundled model catalog (URLs, sizes, licenses) |
@@ -94,6 +99,7 @@ UI** item; the *Web* tab has an **Open web UI** button.
 
 API surface (all also require the token if set):
 `GET/POST /api/settings`, `POST /api/delegate {request}`, `GET /api/version`,
+`GET /api/acpx/status`, `POST /api/acpx/install`, `POST /api/acpx/install_agent {id}`,
 `GET|POST /api/backend/status|start|stop`, `GET /api/models` +
 `POST /api/models/{add,download,cancel,remove,forget}`,
 `POST /api/emit {event,payload}`, `GET /api/events?since=<cursor>` (long-poll),
@@ -112,7 +118,8 @@ endpoint. Same pattern as the whisper.cpp desktop apps.
 | component | bundled? | how you get it |
 |---|---|---|
 | app + web UI + icons + catalog | ✅ in the installer | — |
-| **brain** LLM | ❌ | *Delegation → remote endpoint* (OpenAI / HF / your server), **or** *local* — download a GGUF from the **Models** tab and the app runs `llama-server` on it |
+| **brain** LLM | ❌ | *Delegation → remote endpoint* (OpenAI / HF / your server), *local* — download a GGUF from the **Models** tab and the app runs `llama-server` on it — **or** *coding agent over ACP* |
+| `acpx` + Node.js (ACP delegation only) | ❌ | reuses `acpx` ≥ 0.15 and Node.js ≥ 22.13 from your PATH, else installs pinned builds (acpx 0.15.1, Node.js 24.21.0) into the app data dir |
 | speech STT + TTS (HF cascade) | ❌ | `speech-to-speech serve` auto-fetches them into the HF cache on first run |
 | conversational LLM | ❌ | choose a catalog GGUF in first-run setup / *Models*, use an existing GGUF under **Advanced**, or configure a remote OpenAI-compatible endpoint |
 | `llama-server` runtime | ❌ | reuses an existing Homebrew/PATH install, else downloaded and managed automatically (Apple Silicon macOS) |
@@ -144,6 +151,30 @@ endpoint. Same pattern as the whisper.cpp desktop apps.
 **llama-server binary** field blank (the default) to have the app reuse an
 existing install or download one automatically; set it only to point at your
 own build.
+
+*Coding agent over ACP*: the task goes to an agent CLI you already use —
+Claude Code, Codex, Gemini CLI, Copilot, Cursor, Qwen Code, OpenCode, and every
+other [acpx built-in agent](https://github.com/openclaw/acpx/blob/main/docs/agents.md),
+or any ACP server command (**Custom**). Each delegation is one stateless
+`acpx --format quiet <agent> exec`, with the task on stdin and the final answer
+spoken back.
+
+- **Detection** — the app searches your login-shell PATH (so fnm/nvm/Homebrew
+  installs are found even when the app is launched from a desktop icon) and marks
+  each agent *installed*, *fetched on first use* (adapters acpx runs with `npx`),
+  or *not installed*. **Auto** picks the first installed agent in the list's
+  preference order (Claude Code, Codex, Gemini CLI, …).
+- **Installation** — `acpx` is installed automatically the first time ACP
+  delegation is selected or used, with progress in *Log*. Agents published on npm
+  (Claude Code, Codex, Gemini CLI, Copilot, Qwen Code, …) get an **Install**
+  button; they land in the app data dir, not globally.
+- **Sign-in** — the agent uses its own credentials; run its CLI once in a
+  terminal to log in.
+- **Permissions** — nobody is there to approve tool calls mid-task, so the
+  default is *read-only* (reads and searches approved, edits and commands
+  denied). *Full access* and *no tools* are also available. The agent runs in
+  the configured working directory (default: your home directory).
+- Raise *Timeout* for real work; agents often need longer than a model call.
 
 ## Prerequisites
 

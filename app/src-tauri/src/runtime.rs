@@ -21,11 +21,11 @@ const LLAMA_CPP_BUILD: &str = "b10819";
 const UPSTREAM_URL_DEFAULT: &str = "https://github.com/huggingface/speech-to-speech.git";
 const UPSTREAM_REF_DEFAULT: &str = "e34312cf47cd0159ee82f0d34b02e72353b7752e";
 
-fn log(app: &AppHandle, line: impl AsRef<str>) {
+pub(crate) fn log(app: &AppHandle, line: impl AsRef<str>) {
     let _ = app.emit("backend-log", format!("[runtime] {}", line.as_ref()));
 }
 
-fn runtime_dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn runtime_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
@@ -35,7 +35,7 @@ fn runtime_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn make_executable(path: &Path) -> Result<(), String> {
+pub(crate) fn make_executable(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -52,7 +52,7 @@ fn make_executable(path: &Path) -> Result<(), String> {
 /// a fixed wall-clock budget. (assets.rs's model downloader had exactly this
 /// bug: ureq's `.timeout()` is an absolute deadline covering the whole body
 /// read, not an inactivity timeout.)
-fn download_file(url: &str, dest: &Path) -> Result<(), String> {
+pub(crate) fn download_file(url: &str, dest: &Path) -> Result<(), String> {
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(20))
         .timeout_read(Duration::from_secs(60))
@@ -71,7 +71,7 @@ fn download_file(url: &str, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn extract_tar_gz(archive: &Path, dest_dir: &Path) -> Result<(), String> {
+pub(crate) fn extract_tar_gz(archive: &Path, dest_dir: &Path) -> Result<(), String> {
     fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
     let status = Command::new("tar")
         .arg("-xzf")
@@ -88,7 +88,7 @@ fn extract_tar_gz(archive: &Path, dest_dir: &Path) -> Result<(), String> {
 
 /// Run a command to completion, streaming stdout/stderr into the same Log
 /// tab the speech backend already uses, prefixed so their origin is obvious.
-fn run_streamed(app: &AppHandle, mut cmd: Command, prefix: &str) -> Result<(), String> {
+pub(crate) fn run_streamed(app: &AppHandle, mut cmd: Command, prefix: &str) -> Result<(), String> {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

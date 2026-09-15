@@ -35,6 +35,7 @@ const BRIDGED_EVENTS: &[&str] = &[
     "ova-transcript",
     "speech-toggle",
     "web-status",
+    "acpx-status",
     "asset-progress",
 ];
 const EVENT_LOG_CAP: usize = 256;
@@ -792,6 +793,7 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
                                 crate::apply_web(&app2);
                             }
                             app2.state::<AppState>().brain_server.reconcile(&app2);
+                            app2.state::<AppState>().acpx.reconcile(&app2);
                         });
                     }
                     match out {
@@ -812,6 +814,24 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
                     Ok(answer) => req.respond(json_response(json!({ "answer": answer }), 200)),
                     Err(e) => req.respond(json_response(json!({ "error": e.to_string() }), 502)),
                 }
+            }
+        }
+        (_, "/api/acpx/status") if is_get => {
+            let status = app.state::<AppState>().acpx.status(app, &cfg);
+            req.respond(json_response(serde_json::to_value(status).unwrap_or(Value::Null), 200))
+        }
+        (Method::Post, "/api/acpx/install") => {
+            match app.state::<AppState>().acpx.ensure(app, &cfg) {
+                Ok(path) => req.respond(json_response(json!({ "path": path.display().to_string() }), 200)),
+                Err(e) => req.respond(json_response(json!({ "error": e }), 500)),
+            }
+        }
+        (Method::Post, "/api/acpx/install_agent") => {
+            let body = read_body(&mut req);
+            let id = body.get("id").and_then(Value::as_str).unwrap_or_default();
+            match app.state::<AppState>().acpx.install_agent(app, id) {
+                Ok(()) => req.respond(json_response(json!({ "ok": true }), 200)),
+                Err(e) => req.respond(json_response(json!({ "error": e }), 500)),
             }
         }
         (_, "/api/models") if is_get => {

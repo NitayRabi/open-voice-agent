@@ -69,6 +69,9 @@ fn d_llama_server_bin() -> String {
     #[cfg(not(target_os = "macos"))]
     "llama-server".into()
 }
+fn d_acpx_permissions() -> String {
+    "read".into()
+}
 fn d_brain_local_port() -> u16 {
     8127
 }
@@ -171,7 +174,8 @@ pub struct Settings {
     #[serde(default = "d_true")]
     pub delegation_enabled: bool,
     /// "remote" = call an OpenAI-compatible endpoint; "local" = the app runs a
-    /// llama.cpp server on a downloaded GGUF and calls that.
+    /// llama.cpp server on a downloaded GGUF and calls that; "acpx" = hand the
+    /// task to a coding agent (Claude Code, Codex, …) over ACP via acpx.
     #[serde(default = "d_brain_source")]
     pub brain_source: String,
     /// OpenAI-compatible base URL, including `/v1` (llama.cpp, vLLM, OpenAI, …).
@@ -194,6 +198,26 @@ pub struct Settings {
     pub brain_local_ctx: u32,
     #[serde(default = "d_brain_local_ngl")]
     pub brain_local_ngl: i32,
+    /// acpx mode: an acpx built-in agent id ("claude", "codex", …), "custom"
+    /// for `acpx_custom_command`, or empty to use the first installed agent.
+    #[serde(default)]
+    pub acpx_agent: String,
+    /// acpx mode, agent "custom": a raw ACP server command (`acpx --agent`).
+    #[serde(default)]
+    pub acpx_custom_command: String,
+    /// acpx mode: tool permissions — "read" (approve reads, deny writes),
+    /// "all", or "none".
+    #[serde(default = "d_acpx_permissions")]
+    pub acpx_permissions: String,
+    /// acpx mode: agent model id; empty = the agent's default.
+    #[serde(default)]
+    pub acpx_model: String,
+    /// acpx mode: the agent's working directory; empty = the home directory.
+    #[serde(default)]
+    pub acpx_cwd: String,
+    /// acpx executable; empty = auto-detected, else installed automatically.
+    #[serde(default)]
+    pub acpx_bin: String,
     /// Hugging Face token for gated repos / higher rate limits (model downloads).
     #[serde(default)]
     pub hf_token: String,

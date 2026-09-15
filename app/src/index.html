@@ -68,6 +68,7 @@
             <select id="setup_brain_source">
               <option value="remote">Remote OpenAI-compatible endpoint</option>
               <option value="local">Local downloaded model</option>
+              <option value="acpx">Coding agent on this machine (Claude Code, Codex, Gemini…)</option>
             </select>
           </label>
           <div id="setup_brain_remote" class="setup-stack">
@@ -81,6 +82,19 @@
             <label><span>Use an existing GGUF on this machine</span><input id="setup_brain_path" type="text" spellcheck="false" placeholder="/absolute/path/to/model.gguf" /></label>
             <label><span>llama-server executable (optional)</span><input id="setup_llama_server" type="text" spellcheck="false" placeholder="auto — installed automatically" /></label>
             <p class="muted">You can use the same GGUF for conversation and delegation, or install another model from the Models tab. Leave the executable field blank to have the app install and manage llama.cpp for you.</p>
+          </div>
+          <div id="setup_brain_acpx" class="setup-stack" hidden>
+            <label>
+              <span>Agent</span>
+              <select id="setup_acpx_agent"></select>
+              <small id="setup_acpx_note"></small>
+            </label>
+            <div class="row">
+              <button id="setup_acpx_install_agent" type="button" class="secondary" hidden>Install</button>
+              <button id="setup_acpx_refresh" type="button" class="secondary">Detect again</button>
+              <span id="setup_acpx_status" class="muted"></span>
+            </div>
+            <p class="muted">Tasks go to the agent through <a href="https://github.com/openclaw/acpx" target="_blank" rel="noreferrer">acpx</a> over the Agent Client Protocol. acpx (and Node.js, if needed) is installed automatically. The agent signs in with its own account, and by default may read files but not change anything.</p>
           </div>
         </section>
 
@@ -191,9 +205,9 @@
       <section id="tab-delegation" class="tab">
         <p class="muted">
           The voice model just talks. It has one tool — <code>delegate_task</code> — and
-          calls it when something actually needs doing. The task then goes to a single,
-          more capable model behind an OpenAI-compatible endpoint (the "brain"), and its
-          answer is spoken back.
+          calls it when something actually needs doing. The task then goes to the "brain" —
+          a more capable model behind an OpenAI-compatible endpoint, or a coding agent such
+          as Claude Code or Codex driven over ACP — and its answer is spoken back.
         </p>
         <label class="check">
           <input id="delegation_enabled" type="checkbox" />
@@ -204,6 +218,7 @@
           <select id="brain_source">
             <option value="remote">Remote endpoint (OpenAI-compatible)</option>
             <option value="local">Local — the app runs llama.cpp on a downloaded model</option>
+            <option value="acpx">Coding agent over ACP (acpx) — Claude Code, Codex, Gemini CLI…</option>
           </select>
         </label>
 
@@ -241,11 +256,57 @@
           </div>
         </div>
 
+        <div data-brain="acpx">
+          <div class="acpx-card">
+            <div class="acpx-line"><strong>acpx</strong><span id="acpx_state" class="muted">checking…</span></div>
+            <div class="row">
+              <button id="acpx_install" type="button" class="secondary" hidden>Install acpx now</button>
+              <button id="acpx_refresh" type="button" class="secondary">Detect agents</button>
+            </div>
+            <small class="muted">acpx is a headless ACP client. If it isn't on your PATH, the app installs a pinned build (and Node.js, if needed) the first time it's used.</small>
+          </div>
+          <label>
+            <span>Agent</span>
+            <select id="acpx_agent"></select>
+            <small id="acpx_agent_note"></small>
+          </label>
+          <div class="row" id="acpx_install_agent_row" hidden>
+            <button id="acpx_install_agent" type="button" class="secondary">Install</button>
+          </div>
+          <label data-acpx-custom>
+            <span>Custom ACP agent command</span>
+            <input id="acpx_custom_command" type="text" spellcheck="false" placeholder="e.g. /path/to/my-acp-server --stdio" />
+            <small>Any executable that speaks ACP over stdio — passed to <code>acpx --agent</code>.</small>
+          </label>
+          <label>
+            <span>Tool permissions</span>
+            <select id="acpx_permissions">
+              <option value="read">Read-only — allow reads and searches, deny edits and commands (Recommended)</option>
+              <option value="all">Full access — approve every tool request</option>
+              <option value="none">No tools — deny every tool request</option>
+            </select>
+            <small>Nobody is at the keyboard to approve requests mid-task, so anything not allowed here is denied.</small>
+          </label>
+          <label>
+            <span>Working directory</span>
+            <input id="acpx_cwd" type="text" spellcheck="false" placeholder="(blank = your home directory)" />
+            <small>Where the agent runs and which files it can see.</small>
+          </label>
+          <label>
+            <span>Model (optional)</span>
+            <input id="acpx_model" type="text" spellcheck="false" placeholder="(blank = the agent's default)" />
+          </label>
+          <label>
+            <span>acpx binary (optional)</span>
+            <input id="acpx_bin" type="text" spellcheck="false" placeholder="auto — detected or installed automatically" />
+          </label>
+        </div>
+
         <label>
           <span>Brain system prompt</span>
           <textarea id="brain_system_prompt" rows="4"></textarea>
         </label>
-        <label>
+        <label data-brain-hide="acpx">
           <span>Temperature</span>
           <input id="brain_temperature" type="number" min="0" max="2" step="0.1" />
         </label>
@@ -260,6 +321,7 @@
         <label>
           <span>Timeout (seconds)</span>
           <input id="delegation_timeout_s" type="number" min="5" max="600" />
+          <small data-brain-only="acpx">Coding agents often take a minute or more for real work — allow for it.</small>
         </label>
         <label class="check">
           <input id="delegation_speak_result" type="checkbox" />

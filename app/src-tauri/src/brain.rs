@@ -1,5 +1,6 @@
-//! Delegation to the "brain": a provider-neutral ACP registry when present,
-//! or a single model reached over an OpenAI-compatible
+//! Delegation to the "brain". An explicit "acpx" brain source hands the task to
+//! a coding agent over ACP (see `acpx.rs`); otherwise the provider-neutral ACP
+//! registry when present, or a single model reached over an OpenAI-compatible
 //! `/chat/completions` endpoint as a backwards-compatible fallback.
 
 use std::time::Duration;
@@ -60,6 +61,11 @@ pub fn delegate(app: &AppHandle, cfg: &Settings, request: &str) -> Result<String
     if request.is_empty() {
         bail!("empty delegation request");
     }
+    // The Settings choice wins over the tracked registry, which is always
+    // present in a source checkout.
+    if cfg.brain_source == "acpx" {
+        return crate::acpx::delegate(app, cfg, request);
+    }
     if acp::configured() {
         return acp::delegate(request, None).map(|answer| squash(&answer));
     }
@@ -112,7 +118,7 @@ pub fn delegate(app: &AppHandle, cfg: &Settings, request: &str) -> Result<String
     Ok(squash(text))
 }
 
-fn squash(s: &str) -> String {
+pub(crate) fn squash(s: &str) -> String {
     let joined = s.split_whitespace().collect::<Vec<_>>().join(" ");
     if joined.chars().count() > MAX_SPOKEN_CHARS {
         format!("{}…", joined.chars().take(MAX_SPOKEN_CHARS).collect::<String>())

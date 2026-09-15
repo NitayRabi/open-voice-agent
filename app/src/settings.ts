@@ -1,7 +1,7 @@
 import { getSettings, saveSettings, invoke, listen, isWeb } from "./lib/tauri.js";
 import { element as $, input as $in, select as $sel, valueElement } from "./lib/dom.js";
 import { errorText } from "./lib/errors.js";
-import type { ModelInfo, ModelSource, ModelsList, Settings } from "./lib/types.js";
+import type { AcpxAgent, AcpxStatus, BrainSource, ModelInfo, ModelSource, ModelsList, Settings } from "./lib/types.js";
 
 const logEl = $("log");
 const statusEl = $("status");
@@ -38,6 +38,12 @@ const FIELDS = {
   brain_local_port: "int",
   brain_local_ctx: "int",
   brain_local_ngl: "int",
+  acpx_agent: "value",
+  acpx_custom_command: "value",
+  acpx_permissions: "value",
+  acpx_model: "value",
+  acpx_cwd: "value",
+  acpx_bin: "value",
   hf_token: "value",
   brain_system_prompt: "value",
   brain_temperature: "float",
@@ -95,6 +101,13 @@ function updateBrainVisibility(): void {
   document.querySelectorAll<HTMLElement>("[data-brain]").forEach((el) => {
     el.classList.toggle("show", el.dataset.brain === src);
   });
+  document.querySelectorAll<HTMLElement>("[data-brain-hide]").forEach((el) => {
+    el.style.display = el.dataset.brainHide === src ? "none" : "";
+  });
+  document.querySelectorAll<HTMLElement>("[data-brain-only]").forEach((el) => {
+    el.style.display = el.dataset.brainOnly === src ? "" : "none";
+  });
+  updateAcpxAgentNote();
 }
 function updateSpeechVisibility(): void {
   const src = $sel("speech_model_source").value || "local";
@@ -114,7 +127,10 @@ document.querySelectorAll<HTMLButtonElement>("nav.tabs button").forEach((b) => {
 });
 
 $in("noise_gate_db").addEventListener("input", updateGateLabel);
-$sel("brain_source").addEventListener("change", updateBrainVisibility);
+$sel("brain_source").addEventListener("change", () => {
+  updateBrainVisibility();
+  if ($sel("brain_source").value === "acpx") void renderAcpx();
+});
 $sel("speech_model_source").addEventListener("change", updateSpeechVisibility);
 $sel("speech_model").addEventListener("change", () => ($in("speech_model_path").value = ""));
 
@@ -198,6 +214,123 @@ void listen("ova-transcript", (e) => {
 void listen("web-status", (e) => {
   $("web_state").textContent = e.payload ? "running" : "stopped";
 });
+
+// ── acpx (coding agents over ACP) ───────────────────────────────────────
+let acpxCache: AcpxStatus | null = null;
+
+const AGENT_STATE: Record<AcpxAgent["status"], string> = {
+  ready: "installed",
+  npx: "fetched on first use",
+  missing: "not installed",
+};
+
+function acpxAgent(id: string): AcpxAgent | undefined {
+  return acpxCache?.agents.find((a) => a.id === id);
+}
+
+/** The agent a select resolves to — "" means the first installed one. */
+function resolvedAcpxAgent(select: HTMLSelectElement): AcpxAgent | undefined {
+  return acpxAgent(select.value || acpxCache?.auto_agent || "");
+}
+
+function populateAcpxAgents(select: HTMLSelectElement, fallback: string, withCustom: boolean): void {
+  if (!acpxCache) return;
+  // Before the first render the select is empty, so keep the saved choice.
+  const chosen = select.options.length ? select.value : fallback;
+  const auto = acpxCache.auto_agent ? acpxAgent(acpxCache.auto_agent) : undefined;
+  select.innerHTML = "";
+  option(select, "", auto ? `Auto — ${auto.label}` : "Auto — first installed agent (none found yet)");
+  // Installed agents first, then npx-fetched adapters, then everything else.
+  const rank = { ready: 0, npx: 1, missing: 2 };
+  const sorted = [...acpxCache.agents].sort((a, b) => rank[a.status] - rank[b.status]);
+  for (const a of sorted) option(select, a.id, `${a.label} — ${AGENT_STATE[a.status]}`);
+  if (withCustom) option(select, "custom", "Custom ACP command…");
+  select.value = [...select.options].some((o) => o.value === chosen) ? chosen : "";
+}
+
+function agentNote(select: HTMLSelectElement): { text: string; install: AcpxAgent | null } {
+  if (select.value === "custom") return { text: "Runs the command below as an ACP agent.", install: null };
+  const agent = resolvedAcpxAgent(select);
+  if (!agent) {
+    return { text: "No coding agent CLI was found. Install one (Claude Code, Codex, Gemini CLI…), then detect again.", install: null };
+  }
+  const signIn = "It uses the agent's own sign-in — run the CLI once in a terminal if it hasn't been set up.";
+  if (agent.status === "ready") return { text: `${agent.label} found at ${agent.path}. ${signIn}`, install: null };
+  if (agent.status === "npx") {
+    return { text: `acpx downloads the ${agent.label} adapter with npx the first time it's used. ${signIn}`, install: null };
+  }
+  return agent.installable
+    ? { text: `${agent.label} isn't installed. The app can install it for you.`, install: agent }
+    : { text: `${agent.label} isn't installed. Install its CLI, then detect again.`, install: null };
+}
+
+function updateAcpxAgentNote(): void {
+  if (!acpxCache) return;
+  const note = agentNote($sel("acpx_agent"));
+  $("acpx_agent_note").textContent = note.text;
+  $("acpx_install_agent_row").hidden = !note.install || acpxCache.installing;
+  if (note.install) $("acpx_install_agent").textContent = `Install ${note.install.label}`;
+  document.querySelectorAll<HTMLElement>("[data-acpx-custom]").forEach((el) => {
+    el.style.display = $sel("acpx_agent").value === "custom" ? "" : "none";
+  });
+
+  const setup = agentNote($sel("setup_acpx_agent"));
+  $("setup_acpx_note").textContent = setup.text;
+  $("setup_acpx_install_agent").hidden = !setup.install || acpxCache.installing;
+  if (setup.install) $("setup_acpx_install_agent").textContent = `Install ${setup.install.label}`;
+}
+
+async function renderAcpx(): Promise<void> {
+  try {
+    acpxCache = await invoke("acpx_status");
+  } catch (e) {
+    $("acpx_state").textContent = `error: ${errorText(e)}`;
+    return;
+  }
+  const s = acpxCache;
+  $("acpx_state").textContent = s.installing
+    ? "installing… (progress in the Log tab)"
+    : s.path
+      ? `${s.version ? `v${s.version}` : "found"} · ${s.source === "managed" ? "installed by the app" : s.source} · ${s.path}${s.node ? ` · Node.js ${s.node}` : ""}`
+      : `not installed — installed automatically on first use${s.node ? "" : " (with Node.js)"}`;
+  $("acpx_install").hidden = !!s.path || s.installing;
+  $("setup_acpx_status").textContent = s.installing ? "Installing…" : "";
+  populateAcpxAgents($sel("acpx_agent"), current.acpx_agent || "", true);
+  populateAcpxAgents($sel("setup_acpx_agent"), current.acpx_agent === "custom" ? "" : current.acpx_agent || "", false);
+  updateAcpxAgentNote();
+}
+
+async function installAcpxAgent(select: HTMLSelectElement, report: (msg: string) => void): Promise<void> {
+  const agent = resolvedAcpxAgent(select);
+  if (!agent) return;
+  report(`Installing ${agent.label}…`);
+  try {
+    await invoke("acpx_install_agent", { id: agent.id });
+    report(`${agent.label} installed.`);
+  } catch (e) {
+    report(`Install failed: ${errorText(e)}`);
+  }
+  await renderAcpx();
+}
+
+$sel("acpx_agent").addEventListener("change", updateAcpxAgentNote);
+$sel("setup_acpx_agent").addEventListener("change", updateAcpxAgentNote);
+$("acpx_refresh").addEventListener("click", () => void renderAcpx());
+$("setup_acpx_refresh").addEventListener("click", () => void renderAcpx());
+$("acpx_install_agent").addEventListener("click", () => void installAcpxAgent($sel("acpx_agent"), flash));
+$("setup_acpx_install_agent").addEventListener("click", () =>
+  void installAcpxAgent($sel("setup_acpx_agent"), (msg) => ($("setup_acpx_status").textContent = msg)));
+$("acpx_install").addEventListener("click", async () => {
+  flash("installing acpx…");
+  try {
+    await invoke("acpx_install");
+    flash("acpx installed");
+  } catch (e) {
+    flash(`acpx install failed: ${errorText(e)}`);
+  }
+  await renderAcpx();
+});
+void listen("acpx-status", () => void renderAcpx());
 
 // ── models ──────────────────────────────────────────────────────────────
 const fmtBytes = (n: number | null | undefined): string => {
@@ -415,9 +548,11 @@ function selectedBrainModel(): string {
 }
 
 function syncSetupBrain(): void {
-  const local = $sel("setup_brain_source").value === "local";
-  $("setup_brain_remote").hidden = local;
-  $("setup_brain_local").hidden = !local;
+  const source = $sel("setup_brain_source").value;
+  $("setup_brain_remote").hidden = source !== "remote";
+  $("setup_brain_local").hidden = source !== "local";
+  $("setup_brain_acpx").hidden = source !== "acpx";
+  if (source === "acpx") void renderAcpx();
 }
 
 function initSetupForm(): void {
@@ -451,7 +586,25 @@ async function validateSetupStep(): Promise<void> {
     }
   }
   if (setupStep === 2) {
-    if ($sel("setup_brain_source").value === "remote") {
+    if ($sel("setup_brain_source").value === "acpx") {
+      if (!acpxCache) await renderAcpx();
+      if (!acpxCache) throw new Error("Could not detect coding agents on this machine.");
+      const agent = resolvedAcpxAgent($sel("setup_acpx_agent"));
+      if (!agent) {
+        throw new Error("No coding agent was found. Install one (e.g. Claude Code or Codex), then choose Detect again.");
+      }
+      if (agent.status === "missing") {
+        throw new Error(`${agent.label} isn't installed yet. Install it, or choose another agent.`);
+      }
+      if (!acpxCache.path) {
+        $("setup_acpx_status").textContent = "Installing acpx… this can take a minute.";
+        try {
+          await invoke("acpx_install");
+        } finally {
+          await renderAcpx();
+        }
+      }
+    } else if ($sel("setup_brain_source").value === "remote") {
       if (!$in("setup_brain_url").value.trim()) throw new Error("Enter the capable model endpoint.");
       if (!$in("setup_brain_name").value.trim()) throw new Error("Enter the model name expected by that endpoint.");
     } else {
@@ -473,9 +626,11 @@ function renderSetupReview(): void {
   const items: [string, string | null | undefined][] = [
     ["Voice pipeline", "Parakeet → conversational model → speech"],
     ["Conversational model", speechDescription],
-    ["Delegation", $sel("setup_brain_source").value === "local"
-      ? (selectedBrainModel().includes("/") ? selectedBrainModel() : $sel("setup_brain_model").selectedOptions[0]?.textContent)
-      : `${$in("setup_brain_name").value} at ${$in("setup_brain_url").value}`],
+    ["Delegation", $sel("setup_brain_source").value === "acpx"
+      ? `${resolvedAcpxAgent($sel("setup_acpx_agent"))?.label ?? "Coding agent"} via acpx`
+      : $sel("setup_brain_source").value === "local"
+        ? (selectedBrainModel().includes("/") ? selectedBrainModel() : $sel("setup_brain_model").selectedOptions[0]?.textContent)
+        : `${$in("setup_brain_name").value} at ${$in("setup_brain_url").value}`],
   ];
   for (const [label, value] of items) {
     const row = document.createElement("div");
@@ -524,8 +679,10 @@ $("setup_next").addEventListener("click", async () => {
       current.speech_model = selectedSpeechModel();
     }
     current.delegation_enabled = true;
-    current.brain_source = $sel("setup_brain_source").value as ModelSource;
-    if (current.brain_source === "remote") {
+    current.brain_source = $sel("setup_brain_source").value as BrainSource;
+    if (current.brain_source === "acpx") {
+      current.acpx_agent = $sel("setup_acpx_agent").value;
+    } else if (current.brain_source === "remote") {
       current.brain_base_url = $in("setup_brain_url").value.trim();
       current.brain_model = $in("setup_brain_name").value.trim();
       current.brain_api_key = $in("setup_brain_key").value.trim();
