@@ -10,6 +10,9 @@ import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.NoiseSuppressor
+import android.os.SystemClock
 import android.util.Base64
 import androidx.core.content.ContextCompat
 import okhttp3.Request
@@ -20,11 +23,21 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 
+data class DelegationStatus(
+    val id: String,
+    val request: String,
+    val state: State,
+    val detail: String? = null,
+) {
+    enum class State { RUNNING, SUCCEEDED, FAILED }
+}
+
 class VoiceSession(
     private val context: Context,
     private val node: NodeClient,
     private val settings: NodeSettings,
     private val event: (State, String?) -> Unit,
+    private val delegationEvent: (DelegationStatus) -> Unit = {},
 ) {
     enum class State { CONNECTING, LISTENING, THINKING, SPEAKING, ERROR, IDLE }
 
@@ -32,9 +45,12 @@ class VoiceSession(
     private var recorder: AudioRecord? = null
     private var player: AudioTrack? = null
     private var captureThread: Thread? = null
+    private var echoCanceler: AcousticEchoCanceler? = null
+    private var noiseSuppressor: NoiseSuppressor? = null
     private val active = AtomicBoolean(false)
     private val stopped = AtomicBoolean(false)
     @Volatile private var responseActive = false
+    @Volatile private var microphoneMutedUntil = 0L
     private val reports = ArrayDeque<String>()
 
     @SuppressLint("MissingPermission")
@@ -60,6 +76,18 @@ class VoiceSession(
                 inputSize,
             )
             check(recorder?.state == AudioRecord.STATE_INITIALIZED) { "Watch microphone could not be initialized" }
+            recorder?.audioSessionId?.let { sessionId ->
+                if (AcousticEchoCanceler.isAvailable()) {
+                    echoCanceler = runCatching {
+                        AcousticEchoCanceler.create(sessionId)?.also { it.enabled = true }
+                    }.getOrNull()
+                }
+                if (NoiseSuppressor.isAvailable()) {
+                    noiseSuppressor = runCatching {
+                        NoiseSuppressor.create(sessionId)?.also { it.enabled = true }
+                    }.getOrNull()
+                }
+            }
 
             val attributes = AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_ASSISTANT)
@@ -132,16 +160,21 @@ class VoiceSession(
         captureThread = Thread({
             val audioRecord = recorder ?: return@Thread
             val samples = ShortArray(settings.sampleRate * 40 / 1_000)
+            val gate = VoiceNoiseGate()
             try {
                 audioRecord.startRecording()
                 while (active.get() && !Thread.currentThread().isInterrupted) {
                     val count = audioRecord.read(samples, 0, samples.size)
                     if (count <= 0) continue
+                    val suppressPlayback = responseActive || SystemClock.elapsedRealtime() < microphoneMutedUntil
+                    val passAudio = !suppressPlayback && gate.shouldPass(samples, count)
                     val bytes = ByteArray(count * 2)
-                    for (index in 0 until count) {
-                        val value = samples[index].toInt()
-                        bytes[index * 2] = value.toByte()
-                        bytes[index * 2 + 1] = (value shr 8).toByte()
+                    if (passAudio) {
+                        for (index in 0 until count) {
+                            val value = samples[index].toInt()
+                            bytes[index * 2] = value.toByte()
+                            bytes[index * 2 + 1] = (value shr 8).toByte()
+                        }
                     }
                     socket?.send(
                         JSONObject()
@@ -159,9 +192,6 @@ class VoiceSession(
     private fun handle(message: JSONObject) {
         when (message.optString("type")) {
             "input_audio_buffer.speech_started" -> {
-                player?.pause()
-                player?.flush()
-                player?.play()
                 event(State.LISTENING, "Listening…")
             }
             "input_audio_buffer.speech_stopped", "response.created" -> {
@@ -170,7 +200,13 @@ class VoiceSession(
             }
             "response.output_audio.delta", "response.audio.delta" -> {
                 val bytes = Base64.decode(message.optString("delta"), Base64.DEFAULT)
-                if (bytes.isNotEmpty()) player?.write(bytes, 0, bytes.size)
+                if (bytes.isNotEmpty()) {
+                    val now = SystemClock.elapsedRealtime()
+                    val queuedAfter = maxOf(now, microphoneMutedUntil - PLAYBACK_TAIL_MILLIS)
+                    val audioMillis = bytes.size * 1_000L / (settings.sampleRate * 2L)
+                    microphoneMutedUntil = queuedAfter + audioMillis + PLAYBACK_TAIL_MILLIS
+                    player?.write(bytes, 0, bytes.size)
+                }
                 event(State.SPEAKING, null)
             }
             "response.function_call_arguments.done" -> handleFunction(message)
@@ -189,7 +225,9 @@ class VoiceSession(
         // of 24 kHz, so mirroring the browser client here is important.
         val input = JSONObject()
             .put("transcription", JSONObject().put("model", "whisper-1"))
-            .put("turn_detection", JSONObject().put("type", "server_vad").put("interrupt_response", true))
+            // Barge-in is disabled on the watch: its speaker and microphone are
+            // centimetres apart, and leaked TTS otherwise cancels itself.
+            .put("turn_detection", JSONObject().put("type", "server_vad").put("interrupt_response", false))
         val output = JSONObject()
             .put("voice", settings.voice)
             .put("speed", 1)
@@ -201,7 +239,7 @@ class VoiceSession(
         val session = JSONObject()
             .put("type", "realtime")
             .put("output_modalities", JSONArray().put("audio"))
-            .put("instructions", settings.instructions)
+            .put("instructions", watchInstructions())
             .put("audio", JSONObject().put("input", input).put("output", output))
         if (settings.delegationEnabled) {
             val parameters = JSONObject()
@@ -229,6 +267,9 @@ class VoiceSession(
         val request = runCatching {
             JSONObject(message.optString("arguments", "{}")).optString("request")
         }.getOrDefault("")
+        val taskId = callId.ifBlank { "task-${SystemClock.elapsedRealtime()}" }
+        val taskRequest = request.ifBlank { "Delegated action" }
+        delegationEvent(DelegationStatus(taskId, taskRequest, DelegationStatus.State.RUNNING))
         val output = JSONObject()
             .put("type", "conversation.item.create")
             .put(
@@ -243,6 +284,12 @@ class VoiceSession(
         socket?.send(JSONObject().put("type", "response.create").toString())
         event(State.THINKING, "Handing off…")
         node.delegate(request) { result ->
+            delegationEvent(
+                result.fold(
+                    onSuccess = { DelegationStatus(taskId, taskRequest, DelegationStatus.State.SUCCEEDED, it) },
+                    onFailure = { DelegationStatus(taskId, taskRequest, DelegationStatus.State.FAILED, it.message) },
+                ),
+            )
             if (stopped.get()) return@delegate
             val report = result.fold(
                 onSuccess = { "The delegated task is complete. The agent answered: $it. Relay the result in one or two natural spoken sentences." },
@@ -263,8 +310,21 @@ class VoiceSession(
         socket?.send(JSONObject().put("type", "response.create").toString())
     }
 
+    private fun watchInstructions(): String = buildString {
+        append(settings.instructions.trim())
+        if (settings.delegationEnabled) {
+            append("\n\nYou have real action capability through the ")
+            append(settings.delegationToolName)
+            append(" tool and OpenClaw. For smart-home controls, reminders, messages, searches, or any request to do something, you MUST call that tool before replying. Never claim you cannot access or control something before trying the tool. Use the user's complete request as its request argument.")
+        }
+    }
+
     @Synchronized
     private fun releaseAudio() {
+        echoCanceler?.release()
+        echoCanceler = null
+        noiseSuppressor?.release()
+        noiseSuppressor = null
         recorder?.runCatching { stop() }
         recorder?.release()
         recorder = null
@@ -272,5 +332,9 @@ class VoiceSession(
         player?.flush()
         player?.release()
         player = null
+    }
+
+    private companion object {
+        const val PLAYBACK_TAIL_MILLIS = 300L
     }
 }

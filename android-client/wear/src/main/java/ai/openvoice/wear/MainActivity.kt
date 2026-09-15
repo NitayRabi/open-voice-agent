@@ -30,6 +30,9 @@ class MainActivity : ComponentActivity() {
     private var voiceSession: VoiceSession? = null
     private var starting = false
     private var active = false
+    private var showingTasks = false
+    private var voiceStatus = "Tap to talk"
+    private val delegations = LinkedHashMap<String, DelegationStatus>()
 
     private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) beginTalk() else showTalkScreen("Microphone permission denied")
@@ -63,6 +66,7 @@ class MainActivity : ComponentActivity() {
         initialTrust: Boolean = false,
     ) {
         stopVoice(false)
+        showingTasks = false
         container.removeAllViews()
         title("Pair watch")
         container.addView(caption(message ?: "Connect directly to your Open Voice node"), match(dp(5)))
@@ -121,9 +125,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showTalkScreen(message: String? = null) {
+        showingTasks = false
+        if (message != null) voiceStatus = message
         container.removeAllViews()
         title("Open Voice")
-        val status = caption(message ?: if (active) "Listening…" else "Tap to talk")
+        val status = caption(message ?: voiceStatus)
         val talk = Button(this).apply {
             text = if (active || starting) "■" else "●"
             textSize = 34f
@@ -140,11 +146,54 @@ class MainActivity : ComponentActivity() {
             topMargin = dp(14)
         })
         container.addView(status, match(dp(12)))
+        if (delegations.isNotEmpty()) {
+            val running = delegations.values.count { it.state == DelegationStatus.State.RUNNING }
+            val label = if (running > 0) "● $running task${if (running == 1) "" else "s"}" else "✓ Tasks"
+            container.addView(actionButton(label) { showDelegations() }.apply {
+                textSize = 11f
+                setTextColor(if (running > 0) TASK_ACTIVE else MUTED)
+                minHeight = 0
+                minimumHeight = 0
+                setPadding(dp(10), dp(3), dp(10), dp(3))
+                background = roundedBackground(Color.rgb(27, 34, 50), dp(18).toFloat())
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                topMargin = dp(8)
+            })
+        }
         container.addView(actionButton("Forget & re-pair") { showForgetConfirmation() }.apply {
             textSize = 12f
             setTextColor(MUTED)
             background = null
         }, match(dp(8)))
+    }
+
+    private fun showDelegations() {
+        showingTasks = true
+        container.removeAllViews()
+        title("Agent tasks")
+        if (delegations.isEmpty()) {
+            container.addView(caption("No delegated tasks yet"), match(dp(10)))
+        } else {
+            delegations.values.toList().asReversed().forEach { task ->
+                val symbol = when (task.state) {
+                    DelegationStatus.State.RUNNING -> "●"
+                    DelegationStatus.State.SUCCEEDED -> "✓"
+                    DelegationStatus.State.FAILED -> "!"
+                }
+                container.addView(TextView(this).apply {
+                    text = "$symbol ${task.request.take(72)}"
+                    textSize = 12f
+                    setTextColor(if (task.state == DelegationStatus.State.FAILED) STOP else Color.WHITE)
+                    setPadding(dp(9), dp(7), dp(9), dp(7))
+                    background = roundedBackground(Color.rgb(27, 34, 50), dp(10).toFloat())
+                }, match(dp(7)))
+                task.detail?.takeIf { it.isNotBlank() }?.let { detail ->
+                    container.addView(caption(detail.take(120)).apply { textSize = 10f }, match(dp(2)))
+                }
+            }
+        }
+        container.addView(actionButton("Back") { showTalkScreen() }.apply { textSize = 12f }, match(dp(9)))
     }
 
     private fun showForgetConfirmation() {
@@ -178,7 +227,7 @@ class MainActivity : ComponentActivity() {
                 if (client !== newClient || isFinishing || isDestroyed) return@runOnUiThread
                 result.fold(
                     onSuccess = { settings ->
-                        val session = VoiceSession(this, newClient, settings, ::onVoiceEvent)
+                        val session = VoiceSession(this, newClient, settings, ::onVoiceEvent, ::onDelegationEvent)
                         voiceSession = session
                         session.start()
                     },
@@ -203,25 +252,37 @@ class MainActivity : ComponentActivity() {
         when (state) {
             VoiceSession.State.CONNECTING -> {
                 starting = true
-                showTalkScreen(detail ?: "Connecting…")
+                renderVoiceStatus(detail ?: "Connecting…")
             }
             VoiceSession.State.LISTENING -> {
                 starting = false
                 active = true
-                showTalkScreen(detail ?: "Listening…")
+                renderVoiceStatus(detail ?: "Listening…")
             }
-            VoiceSession.State.THINKING -> showTalkScreen(detail ?: "Thinking…")
-            VoiceSession.State.SPEAKING -> showTalkScreen(detail ?: "Speaking…")
+            VoiceSession.State.THINKING -> renderVoiceStatus(detail ?: "Thinking…")
+            VoiceSession.State.SPEAKING -> renderVoiceStatus(detail ?: "Speaking…")
             VoiceSession.State.ERROR -> {
                 stopVoice(false)
-                showTalkScreen(detail ?: "Voice connection failed")
+                renderVoiceStatus(detail ?: "Voice connection failed")
             }
             VoiceSession.State.IDLE -> {
                 active = false
                 starting = false
-                showTalkScreen(detail ?: "Tap to talk")
+                renderVoiceStatus(detail ?: "Tap to talk")
             }
         }
+    }
+
+    private fun renderVoiceStatus(message: String) {
+        voiceStatus = message
+        if (showingTasks) showDelegations() else showTalkScreen(message)
+    }
+
+    private fun onDelegationEvent(status: DelegationStatus) = runOnUiThread {
+        if (isFinishing || isDestroyed) return@runOnUiThread
+        delegations[status.id] = status
+        while (delegations.size > MAX_TASKS) delegations.remove(delegations.keys.first())
+        if (showingTasks) showDelegations() else showTalkScreen()
     }
 
     private fun stopVoice(notify: Boolean = true) {
@@ -279,6 +340,12 @@ class MainActivity : ComponentActivity() {
         setOnClickListener { action() }
     }
 
+    private fun roundedBackground(color: Int, radius: Float) = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        setColor(color)
+        cornerRadius = radius
+    }
+
     private fun match(top: Int = 0) = LinearLayout.LayoutParams(
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -291,5 +358,7 @@ class MainActivity : ComponentActivity() {
         val ACCENT = Color.rgb(70, 100, 210)
         val STOP = Color.rgb(184, 62, 82)
         val MUTED = Color.rgb(173, 184, 207)
+        val TASK_ACTIVE = Color.rgb(108, 210, 154)
+        const val MAX_TASKS = 8
     }
 }
