@@ -51,8 +51,8 @@ class MainActivity : ComponentActivity() {
         container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            val side = dp(if (resources.configuration.isScreenRound) 28 else 18)
-            setPadding(side, dp(18), side, dp(22))
+            val side = dp(if (resources.configuration.isScreenRound) 24 else 16)
+            setPadding(side, dp(14), side, dp(18))
         }
         setContentView(ScrollView(this).apply {
             isFillViewport = true
@@ -66,9 +66,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // This is a short, node-issued pairing secret rather than an account
-    // password. Direct entry is intentional so the standalone watch can pair
-    // without requiring the phone app, and the field remains masked.
+    // Direct entry for standalone pairing
     @SuppressLint("WearPasswordInput")
     private fun showPairingScreen(
         message: String? = null,
@@ -117,8 +115,6 @@ class MainActivity : ComponentActivity() {
                 if (client !== checkingClient || isFinishing || isDestroyed) return@runOnUiThread
                 result.fold(
                     onSuccess = { credential ->
-                        // Preserve the address the user knows reaches the node;
-                        // base_url can differ behind a TLS-terminating proxy.
                         store.save(SavedNode(url, credential.accessToken, trustSelfSigned))
                         checkingClient.close()
                         client = null
@@ -138,8 +134,7 @@ class MainActivity : ComponentActivity() {
         showingTasks = false
         if (message != null) voiceStatus = message
         container.removeAllViews()
-        title("Open Voice")
-        val status = caption(message ?: voiceStatus)
+
         val orb = orbView().apply {
             this.state = voiceState
             var swipeStart = 0f
@@ -156,13 +151,42 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        container.addView(orb, LinearLayout.LayoutParams(dp(112), dp(112)).apply {
+
+        // 1. Prominent Voice Orb with State Glow & Icon
+        container.addView(orb, LinearLayout.LayoutParams(dp(120), dp(120)).apply {
             gravity = Gravity.CENTER_HORIZONTAL
-            topMargin = dp(14)
+            topMargin = dp(4)
         })
-        container.addView(caption(currentAgentAlias()).apply { textSize = 12f; setTextColor(Color.WHITE) }, match(dp(3)))
-        if (agents.size > 1) container.addView(caption("Swipe orb to change agent").apply { textSize = 9f }, match(dp(1)))
-        container.addView(status, match(dp(12)))
+
+        // 2. Agent Name
+        container.addView(TextView(this).apply {
+            text = currentAgentAlias()
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+        }, match(dp(4)))
+
+        // Swipe hint if multi-agent
+        if (agents.size > 1) {
+            container.addView(caption("Swipe left/right to change").apply { textSize = 9f }, match(dp(1)))
+        }
+
+        // 3. Status text ("Tap to talk", "Connecting…", "Listening…", etc.)
+        val statusColor = when (voiceState) {
+            "listening", "user_speaking" -> Color.rgb(70, 235, 195)
+            "speaking" -> Color.rgb(180, 140, 255)
+            "connecting" -> Color.rgb(255, 200, 100)
+            "error" -> STOP
+            else -> MUTED
+        }
+        val status = caption(message ?: voiceStatus).apply {
+            setTextColor(statusColor)
+            textSize = 12f
+        }
+        container.addView(status, match(dp(4)))
+
+        // Delegations / Tasks indicator
         if (delegations.isNotEmpty()) {
             val running = delegations.values.count { it.state == DelegationStatus.State.RUNNING }
             val label = if (running > 0) "● $running task${if (running == 1) "" else "s"}" else "✓ Tasks"
@@ -175,19 +199,18 @@ class MainActivity : ComponentActivity() {
                 background = roundedBackground(Color.rgb(27, 34, 50), dp(18).toFloat())
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.CENTER_HORIZONTAL
-                topMargin = dp(8)
+                topMargin = dp(6)
             })
         }
+
+        // Forget & Re-pair link at bottom
         container.addView(actionButton("Forget & re-pair") { showForgetConfirmation() }.apply {
-            textSize = 12f
+            textSize = 11f
             setTextColor(MUTED)
             background = null
-        }, match(dp(8)))
+        }, match(dp(6)))
     }
 
-    // Reuses a single orb instance across re-renders so its animation stays
-    // continuous; the tap gesture is the same start/stop talk control the old
-    // round button provided.
     private fun orbView(): OrbView {
         orb ?: OrbView(this).apply {
             setOnClickListener { if (active || starting) stopVoice() else requestTalk() }
@@ -246,7 +269,10 @@ class MainActivity : ComponentActivity() {
         val node = store.load() ?: return showPairingScreen()
         if (starting || active) return
         starting = true
+        voiceState = "connecting"
+        orb?.state = "connecting"
         showTalkScreen("Connecting…")
+
         val newClient = NodeClient(node.url, node.accessToken, node.trustSelfSigned)
         client = newClient
         newClient.settings { result ->
@@ -261,6 +287,8 @@ class MainActivity : ComponentActivity() {
                     },
                     onFailure = {
                         starting = false
+                        voiceState = "error"
+                        orb?.state = "error"
                         newClient.close()
                         client = null
                         if (it is NodeAccessRevokedException) {
@@ -312,31 +340,37 @@ class MainActivity : ComponentActivity() {
             VoiceSession.State.CONNECTING -> {
                 starting = true
                 voiceState = "connecting"
+                orb?.state = "connecting"
                 renderVoiceStatus(detail ?: "Connecting…")
             }
             VoiceSession.State.LISTENING -> {
                 starting = false
                 active = true
                 voiceState = "listening"
+                orb?.state = "listening"
                 renderVoiceStatus(detail ?: "Listening…")
             }
             VoiceSession.State.THINKING -> {
                 voiceState = "thinking"
+                orb?.state = "thinking"
                 renderVoiceStatus(detail ?: "Thinking…")
             }
             VoiceSession.State.SPEAKING -> {
                 voiceState = "speaking"
+                orb?.state = "speaking"
                 renderVoiceStatus(detail ?: "Speaking…")
             }
             VoiceSession.State.ERROR -> {
                 stopVoice(false)
                 voiceState = "error"
+                orb?.state = "error"
                 renderVoiceStatus(detail ?: "Voice connection failed")
             }
             VoiceSession.State.IDLE -> {
                 active = false
                 starting = false
                 voiceState = "idle"
+                orb?.state = "idle"
                 renderVoiceStatus(detail ?: "Tap to talk")
             }
         }
@@ -361,6 +395,8 @@ class MainActivity : ComponentActivity() {
     private fun stopVoice(notify: Boolean = true) {
         active = false
         starting = false
+        voiceState = "idle"
+        orb?.state = "idle"
         val oldSession = voiceSession
         voiceSession = null
         oldSession?.stop(false)
@@ -382,7 +418,7 @@ class MainActivity : ComponentActivity() {
     private fun title(text: String) {
         container.addView(TextView(this).apply {
             this.text = text
-            textSize = 21f
+            textSize = 20f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
