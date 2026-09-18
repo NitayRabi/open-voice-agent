@@ -19,6 +19,13 @@ export interface IssuedDeviceCredential {
   device: PairedDevice;
 }
 
+/** Result from OpenJEV routing decision. */
+export interface RouteDecision {
+  agent_id: string;
+  agent_alias: string;
+  ack_prompt: string;
+}
+
 /** Where delegated tasks go: a model (local/remote), or a coding agent over ACP via acpx. */
 export type BrainSource = ModelSource | "acpx";
 
@@ -29,6 +36,7 @@ export type AcpxPermissions = "read" | "all" | "none";
 export interface DelegationAgent {
   id: string;
   alias: string;
+  description?: string;
   brain_source: BrainSource | "acp";
   brain_base_url: string;
   brain_api_key: string;
@@ -46,6 +54,8 @@ export interface DelegationAgent {
   acpx_bin: string;
   brain_system_prompt: string;
   brain_temperature: number;
+  delegation_tool_name?: string;
+  delegation_tool_description?: string;
   delegation_timeout_s: number;
   delegation_speak_result: boolean;
 }

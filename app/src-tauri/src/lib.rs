@@ -6,6 +6,7 @@ mod config;
 mod device_access;
 mod hotkey;
 mod localbrain;
+mod openjev;
 mod runtime;
 mod webserver;
 
@@ -130,6 +131,22 @@ fn apply_web(app: &AppHandle) {
             let _ = app.emit("backend-log", format!("[web] start failed: {e}"));
         }
     }
+}
+
+#[tauri::command]
+async fn route_delegation(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: String,
+    agent_id: Option<String>,
+) -> Result<openjev::RouteDecision, String> {
+    let cfg = state.settings.lock().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        openjev::route_task(&app, &cfg, &request, agent_id.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -368,6 +385,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
+            route_delegation,
             delegate,
             acpx_status,
             acpx_install,

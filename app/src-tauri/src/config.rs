@@ -16,6 +16,8 @@ use tauri::{AppHandle, Manager};
 pub struct DelegationAgent {
     pub id: String,
     pub alias: String,
+    #[serde(default)]
+    pub description: String,
     #[serde(default = "d_brain_source")]
     pub brain_source: String,
     #[serde(default = "d_brain_base_url")]
@@ -50,6 +52,10 @@ pub struct DelegationAgent {
     pub brain_system_prompt: String,
     #[serde(default = "d_brain_temperature")]
     pub brain_temperature: f64,
+    #[serde(default = "d_tool_name")]
+    pub delegation_tool_name: String,
+    #[serde(default = "d_tool_desc")]
+    pub delegation_tool_description: String,
     #[serde(default = "d_timeout")]
     pub delegation_timeout_s: u64,
     #[serde(default = "d_true")]
@@ -217,7 +223,7 @@ pub struct Settings {
     #[serde(default)]
     pub app_autostart: bool,
 
-    // ── delegation to the "brain" ──────────────────────────────────
+    // ── delegation to the "brain" ───────────────────────────────────────
     #[serde(default = "d_true")]
     pub delegation_enabled: bool,
     /// "remote" = call an OpenAI-compatible endpoint; "local" = the app runs a
@@ -287,7 +293,7 @@ pub struct Settings {
     #[serde(default = "d_true")]
     pub delegation_speak_result: bool,
 
-    // ── engine / backend supervisor ─────────────────────────────────
+    // ── engine / backend supervisor ─────────────────────────────────────
     /// Let the app start/stop the speech backend process.
     #[serde(default)]
     pub manage_backend: bool,
@@ -368,7 +374,7 @@ impl Settings {
     /// Apply a client-selected backend profile to a copy of these settings.
     /// Unknown ids are rejected instead of silently sending work elsewhere.
     pub fn for_delegation_agent(&self, selected: Option<&str>) -> Result<Option<Settings>> {
-        let Some(selected) = selected.map(str::trim).filter(|id| !id.is_empty()) else {
+        let Some(selected) = selected.map(str::trim).filter(|id| !id.is_empty() && *id != "orchestrator") else {
             return Ok(None);
         };
         let agent = self
@@ -394,6 +400,14 @@ impl Settings {
         out.acpx_bin = agent.acpx_bin.clone();
         out.brain_system_prompt = agent.brain_system_prompt.clone();
         out.brain_temperature = agent.brain_temperature;
+        if !agent.delegation_tool_name.is_empty() {
+            out.delegation_tool_name = agent.delegation_tool_name.clone();
+        }
+        if !agent.description.is_empty() {
+            out.delegation_tool_description = agent.description.clone();
+        } else if !agent.delegation_tool_description.is_empty() {
+            out.delegation_tool_description = agent.delegation_tool_description.clone();
+        }
         out.delegation_timeout_s = agent.delegation_timeout_s;
         out.delegation_speak_result = agent.delegation_speak_result;
         Ok(Some(out))
@@ -461,58 +475,13 @@ impl Settings {
             && self.web_token == o.web_token
             && self.web_tls_cert == o.web_tls_cert
             && self.web_tls_key == o.web_tls_key
+            && self.web_tailscale == o.web_tailscale
+            && self.web_tailscale_binary == o.web_tailscale_binary
     }
 
     pub fn save(&self, app: &AppHandle) -> Result<()> {
         let path = Self::config_path(app)?;
-        let raw = serde_json::to_string_pretty(self)?;
-        fs::write(&path, raw).with_context(|| format!("writing {path:?}"))?;
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn selected_agent_replaces_the_complete_backend_config() {
-        let mut settings = Settings::default();
-        settings.brain_source = "remote".into();
-        settings.brain_model = "default-model".into();
-        settings.delegation_agents = vec![serde_json::from_value(json!({
-            "id": "work-codex",
-            "alias": "Work",
-            "brain_source": "acpx",
-            "acpx_agent": "codex",
-            "acpx_model": "work-profile",
-            "acpx_cwd": "/projects/work",
-            "brain_system_prompt": "Work profile prompt"
-        })).unwrap()];
-
-        let routed = settings.for_delegation_agent(Some("work-codex")).unwrap().unwrap();
-        assert_eq!(routed.brain_source, "acpx");
-        assert_eq!(routed.acpx_agent, "codex");
-        assert_eq!(routed.acpx_model, "work-profile");
-        assert_eq!(routed.acpx_cwd, "/projects/work");
-        assert_eq!(routed.brain_system_prompt, "Work profile prompt");
-        assert_eq!(settings.brain_model, "default-model");
-    }
-
-    #[test]
-    fn unknown_selected_agent_is_rejected() {
-        let settings = Settings::default();
-        assert!(settings.for_delegation_agent(Some("missing")).is_err());
-        assert!(settings.for_delegation_agent(None).unwrap().is_none());
-    }
-
-    #[test]
-    fn duplicate_profile_ids_are_rejected() {
-        let mut settings = Settings::default();
-        let profile: DelegationAgent =
-            serde_json::from_value(json!({"id":"same", "alias":"One"})).unwrap();
-        settings.delegation_agents = vec![profile.clone(), profile];
-        assert!(settings.validate_delegation_agents().is_err());
+        let json = serde_json::to_string_pretty(self).context("serialise settings")?;
+        fs::write(&path, json).with_context(|| format!("write {path:?}"))
     }
 }

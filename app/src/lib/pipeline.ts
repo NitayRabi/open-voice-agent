@@ -10,6 +10,7 @@ import type {
   AudioInputDevice,
   LevelDetail,
   PipelineState,
+  RouteDecision,
   Settings,
   TaskDetail,
   TranscriptDetail,
@@ -51,8 +52,10 @@ interface CaptureMessage {
 }
 
 export interface PipelineOptions {
+  /** Runs OpenJEV routing to decide candidate agent and acknowledgement phrase. */
+  route?: (request: string) => Promise<RouteDecision>;
   /** Runs a delegated task and resolves with the spoken-back answer. */
-  delegate?: (request: string) => Promise<string>;
+  delegate?: (request: string, agentId?: string) => Promise<string>;
   /** Allows a selected backend profile to override result speech per task. */
   shouldSpeakDelegatedResult?: () => boolean;
   /** Directory holding the audio worklets; defaults to `../worklets/`. */
@@ -264,8 +267,6 @@ export class VoicePipeline extends EventTarget {
     capture.port.onmessage = (e: MessageEvent<ArrayBuffer | CaptureMessage>) => {
       const d = e.data;
       if (d instanceof ArrayBuffer) this._onMicChunk(d);
-      // UI metering is emitted by the analyser pump below, together with the
-      // actual waveform samples used by the orb boundary.
     };
     micSrc.connect(capture);
 
@@ -348,7 +349,7 @@ export class VoicePipeline extends EventTarget {
         name: cfg.delegation_tool_name || "delegate_task",
         description:
           cfg.delegation_tool_description ||
-          "Hand a task to the more capable brain model when the user wants something actually done.",
+          "Hand a task to the more capable background agent when the user wants something actually done.",
         parameters: {
           type: "object",
           properties: {
@@ -366,10 +367,6 @@ export class VoicePipeline extends EventTarget {
   private _sessionUpdate(): unknown {
     const cfg = this._cfg;
     const rate = cfg.sample_rate || 16000;
-    // OpenAI's Realtime schema only permits an explicit PCM rate of 24 kHz.
-    // The local speech-to-speech server uses 16 kHz natively when `format` is
-    // omitted, so spelling out 16 kHz makes Pydantic reject the *entire*
-    // session.update (including instructions and tools).
     const pcmFormat = rate === 16000 ? {} : { format: { type: "audio/pcm", rate } };
     return {
       type: "session.update",
@@ -527,14 +524,30 @@ export class VoicePipeline extends EventTarget {
     this._emit("transcript", { role: "tool", text: `delegate_task → ${request}` });
     this._emit("task", { id: taskId, request, status: "running" });
 
-    // 1. Acknowledge immediately so the voice model tells the user it's on it
-    //    while the brain works.
+    // 1. Run OpenJEV routing / agent classifier if configured
+    let decision: RouteDecision | null = null;
+    if (this.opts.route) {
+      try {
+        decision = await this.opts.route(request);
+      } catch (e) {
+        this._log(`route error: ${errorText(e)}`);
+      }
+    }
+
+    const ackPrompt =
+      decision?.ack_prompt ||
+      (decision?.agent_alias
+        ? `Delegated to ${decision.agent_alias}. Tell the user briefly that you sent it to ${decision.agent_alias} and are on it.`
+        : "Handed to the brain. Tell the user briefly that you're on it.");
+
+    // 2. Acknowledge immediately so the voice model tells the user it's on it
+    //    while the brain works, noting the chosen agent.
     this._sendWs({
       type: "conversation.item.create",
       item: {
         type: "function_call_output",
         call_id: callId,
-        output: "Handed to the brain. Tell the user briefly that you're on it.",
+        output: ackPrompt,
       },
     });
     // Reserve the response slot immediately so a fast delegated result cannot
@@ -542,7 +555,7 @@ export class VoicePipeline extends EventTarget {
     this._responseActive = true;
     this._sendWs({ type: "response.create" });
 
-    // 2. Run the delegation off the critical path.
+    // 3. Run the delegation off the critical path.
     if (!this.opts.delegate) {
       this._log("no delegate handler wired");
       this._emit("task", {
@@ -555,17 +568,19 @@ export class VoicePipeline extends EventTarget {
     }
     const speakResult = this.opts.shouldSpeakDelegatedResult?.() ?? this._cfg.delegation_speak_result;
     try {
-      const answer = await this.opts.delegate(request);
-      this._emit("transcript", { role: "tool", text: `brain ✓ ${answer}` });
+      const answer = await this.opts.delegate(request, decision?.agent_id);
+      const agentLabel = decision?.agent_alias || "brain";
+      this._emit("transcript", { role: "tool", text: `${agentLabel} ✓ ${answer}` });
       this._emit("task", { id: taskId, request, status: "completed", result: answer });
       if (speakResult && answer) {
         this._queueAgentReport(
-          `The delegated task is complete. The agent answered: ${answer}. Relay the result to me in one or two natural spoken sentences.`,
+          `The delegated task is complete. ${decision?.agent_alias || "The agent"} answered: ${answer}. Relay the result to me in one or two natural spoken sentences.`,
         );
       }
     } catch (e) {
       const err = errorText(e);
-      this._emit("transcript", { role: "tool", text: `brain ✗ ${err}` });
+      const agentLabel = decision?.agent_alias || "brain";
+      this._emit("transcript", { role: "tool", text: `${agentLabel} ✗ ${err}` });
       this._emit("task", { id: taskId, request, status: "failed", error: err });
       this._queueAgentReport(`The delegated task failed: ${err}. Let me know briefly.`);
     }

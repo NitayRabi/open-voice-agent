@@ -1,11 +1,11 @@
 import { VoicePipeline } from "./lib/pipeline.js";
-import { getSettings, delegate, listen } from "./lib/tauri.js";
+import { getSettings, routeDelegation, delegate, listen } from "./lib/tauri.js";
 import { StormOrb } from "./lib/storm-orb.js";
 import { TaskToast } from "./lib/task-toast.js";
 import { element } from "./lib/dom.js";
 import { ensureVoiceBackend, keepVoiceBackendAlive } from "./lib/backend-lifecycle.js";
 import { errorText } from "./lib/errors.js";
-import type { PipelineState, TranscriptDetail } from "./lib/types.js";
+import type { PipelineState } from "./lib/types.js";
 import { AgentSelection } from "./lib/agent-selection.js";
 
 const orb = element("orb");
@@ -28,7 +28,8 @@ const CAPTIONS: Record<PipelineState, string> = {
 };
 
 const pipeline = new VoicePipeline({
-  delegate: (r) => delegate(r, agentSelection.currentId()),
+  route: (r) => routeDelegation(r, agentSelection.currentId()),
+  delegate: (r, agentId) => delegate(r, agentId ?? agentSelection.currentId()),
   shouldSpeakDelegatedResult: () => agentSelection.speakResult(true),
   ensureBackend: ensureVoiceBackend,
   backendActivity: keepVoiceBackendAlive,
@@ -42,6 +43,27 @@ async function loadSettings(): Promise<void> {
     return;
   }
   pipeline.configure(settings);
+}
+
+function setNotice(text: string, isError = false): void {
+  notice.textContent = text;
+  notice.className = `web-notice ${isError ? "error" : ""}`;
+  notice.hidden = !text;
+}
+
+function addMsg(role: string, text: string): void {
+  const row = document.createElement("div");
+  row.className = `msg ${role}`;
+  const tag = document.createElement("span");
+  tag.className = "tag";
+  tag.textContent = role === "user" ? "You" : role === "assistant" ? "Assistant" : "Task";
+  const body = document.createElement("span");
+  body.className = "body";
+  body.textContent = text;
+  row.appendChild(tag);
+  row.appendChild(body);
+  feed.appendChild(row);
+  feed.scrollTop = feed.scrollHeight;
 }
 
 pipeline.addEventListener("state", (e) => {
@@ -60,52 +82,21 @@ pipeline.addEventListener("log", (e) => console.log("[pipeline]", e.detail.msg))
 pipeline.addEventListener("transcript", (e) => addMsg(e.detail.role, e.detail.text));
 pipeline.addEventListener("task", (e) => taskToast.update(e.detail));
 
-function addMsg(role: TranscriptDetail["role"], text: string): void {
-  const cls = role === "user" ? "user" : role === "tool" ? "tool" : "assistant";
-  const el = document.createElement("div");
-  el.className = `msg ${cls}`;
-  const who = document.createElement("span");
-  who.className = "who";
-  who.textContent = role;
-  el.append(who, document.createTextNode(text));
-  feed.append(el);
-  while (feed.children.length > 40) feed.firstChild?.remove();
-  el.scrollIntoView({ block: "nearest" });
-}
-
-async function toggle(): Promise<void> {
+orb.addEventListener("click", async () => {
   try {
+    setNotice("");
     await pipeline.toggle();
   } catch (err) {
-    console.error(err);
-    notice.hidden = false;
-    notice.textContent = errorText(err);
-  }
-}
-
-orb.addEventListener("click", () => void toggle());
-orb.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" || e.key === " ") {
-    e.preventDefault();
-    void toggle();
+    setNotice(errorText(err), true);
   }
 });
 
 void listen("settings-changed", async () => {
-  const wasRunning = pipeline.running;
-  await loadSettings();
-  if (wasRunning) {
-    pipeline.stop();
-    setTimeout(() => pipeline.start().catch((e: unknown) => console.error(e)), 250);
+  try {
+    await loadSettings();
+  } catch {
+    /* ignore */
   }
 });
-void listen("speech-toggle", () => void toggle());
 
-await loadSettings();
-
-if (!window.isSecureContext && location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
-  notice.hidden = false;
-  notice.textContent =
-    "Microphone needs a secure context. Open this over HTTPS (set a TLS cert in Settings → Web) " +
-    "or via an SSH tunnel to localhost.";
-}
+void loadSettings();

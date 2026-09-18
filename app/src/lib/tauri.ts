@@ -8,6 +8,7 @@ import type {
   ModelsList,
   PairedDevice,
   IssuedDeviceCredential,
+  RouteDecision,
   Settings,
   TranscriptDetail,
 } from "./types.js";
@@ -63,6 +64,7 @@ async function api<T>(path: string, { method = "GET", body }: ApiOptions = {}): 
 export interface Commands {
   get_settings: { args: void; result: Settings };
   save_settings: { args: { settings: Settings }; result: void };
+  route_delegation: { args: { request: string; agentId?: string }; result: RouteDecision };
   delegate: { args: { request: string; agentId?: string }; result: string };
   acpx_status: { args: void; result: AcpxStatus };
   acpx_install: { args: void; result: string };
@@ -99,6 +101,8 @@ type WebImpls = { [K in CommandName]?: (args: Args<K>) => Promise<Result<K>> | R
 const WEB: WebImpls = {
   get_settings: () => api<Settings>("/api/settings"),
   save_settings: ({ settings }) => api<void>("/api/settings", { method: "POST", body: { settings } }),
+  route_delegation: ({ request, agentId }) =>
+    api<RouteDecision>("/api/route", { method: "POST", body: { request, agent_id: agentId } }),
   delegate: ({ request, agentId }) =>
     api<{ answer: string }>("/api/delegate", { method: "POST", body: { request, agent_id: agentId } }).then((d) => d.answer),
   acpx_status: () => api<AcpxStatus>("/api/acpx/status"),
@@ -211,6 +215,9 @@ export async function getSettings(): Promise<Settings> {
 }
 export async function saveSettings(settings: Settings): Promise<void> {
   return invoke("save_settings", { settings });
+}
+export async function routeDelegation(request: string, agentId?: string): Promise<RouteDecision> {
+  return invoke("route_delegation", { request, agentId });
 }
 export async function delegate(request: string, agentId?: string): Promise<string> {
   return invoke("delegate", { request, agentId });

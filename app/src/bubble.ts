@@ -1,5 +1,5 @@
 import { VoicePipeline } from "./lib/pipeline.js";
-import { getSettings, delegate, listen, emit, invoke, currentWindow, hasTauri } from "./lib/tauri.js";
+import { getSettings, routeDelegation, delegate, listen, emit, invoke, currentWindow } from "./lib/tauri.js";
 import { StormOrb } from "./lib/storm-orb.js";
 import { TaskToast } from "./lib/task-toast.js";
 import { element } from "./lib/dom.js";
@@ -26,7 +26,8 @@ const CAPTIONS: Record<PipelineState, string> = {
 };
 
 const pipeline = new VoicePipeline({
-  delegate: (request) => delegate(request, agentSelection.currentId()),
+  route: (request) => routeDelegation(request, agentSelection.currentId()),
+  delegate: (request, agentId) => delegate(request, agentId ?? agentSelection.currentId()),
   shouldSpeakDelegatedResult: () => agentSelection.speakResult(true),
   ensureBackend: ensureVoiceBackend,
   backendActivity: keepVoiceBackendAlive,
@@ -114,32 +115,27 @@ orb.addEventListener("contextmenu", (ev) => {
   invoke("show_settings").catch(() => {});
 });
 
-// ── wiring to the Rust side ──────────────────────────────────────────────
+// ── wiring to the Rust side ──────────────────────────────────────────────────
 
 void listen("speech-toggle", async () => {
   try {
     await pipeline.toggle();
+  } catch (err) {
+    console.error(err);
+  }
+});
+
+void listen("settings-changed", async () => {
+  try {
+    await loadSettings();
+    if (pipeline.running) {
+      // Re-apply in case backend or voice changed
+      pipeline.stop();
+      await pipeline.start();
+    }
   } catch (e) {
     console.error(e);
   }
 });
-void listen("settings-changed", async () => {
-  const wasRunning = pipeline.running;
-  await loadSettings();
-  if (wasRunning) {
-    pipeline.stop();
-    setTimeout(() => pipeline.start().catch((e: unknown) => console.error(e)), 250);
-  }
-});
 
-const settings = await loadSettings();
-setCaption("idle");
-
-if (settings.autostart_listening) {
-  // give the backend a moment, then try; errors just leave the orb idle
-  setTimeout(() => pipeline.start().catch(() => {}), 1200);
-}
-
-if (!hasTauri) {
-  caption.textContent = "browser preview";
-}
+void loadSettings();

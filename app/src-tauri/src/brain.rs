@@ -61,9 +61,21 @@ pub fn delegate(app: &AppHandle, cfg: &Settings, request: &str, selected_agent: 
     if request.is_empty() {
         bail!("empty delegation request");
     }
+    // If in orchestrator mode and multiple agents exist, resolve agent via OpenJEV
+    let target_agent_id = if (selected_agent.is_none()
+        || selected_agent == Some("orchestrator")
+        || selected_agent == Some(""))
+        && cfg.delegation_agents.len() > 1
+    {
+        crate::openjev::route_task(app, cfg, request, None)
+            .ok()
+            .map(|d| d.agent_id)
+    } else {
+        selected_agent.map(str::to_string)
+    };
     // The Settings choice wins over the tracked registry, which is always
     // present in a source checkout.
-    let routed = cfg.for_delegation_agent(selected_agent)?;
+    let routed = cfg.for_delegation_agent(target_agent_id.as_deref())?;
     let cfg = routed.as_ref().unwrap_or(cfg);
     if cfg.brain_source == "acpx" {
         return crate::acpx::delegate(app, cfg, request);

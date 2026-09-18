@@ -5,6 +5,12 @@ type AgentChoice = Pick<DelegationAgent, "id" | "alias" | "delegation_speak_resu
 
 export function agentChoices(settings: Settings): AgentChoice[] {
   const valid = (settings.delegation_agents || []).filter((agent) => agent.id.trim() && agent.alias.trim());
+  if (valid.length > 1) {
+    return [
+      { id: "orchestrator", alias: "Orchestrator", delegation_speak_result: settings.delegation_speak_result },
+      ...valid,
+    ];
+  }
   return valid.length ? valid : [{ id: "", alias: "Agent", delegation_speak_result: settings.delegation_speak_result }];
 }
 
@@ -28,7 +34,8 @@ export class AgentSelection {
   }
 
   currentId(): string | undefined {
-    return this.choices[this.index]?.id || undefined;
+    const id = this.choices[this.index]?.id;
+    return id ? id : undefined;
   }
 
   speakResult(fallback: boolean): boolean {
@@ -45,7 +52,7 @@ export class AgentSelection {
   private render(): void {
     const agent = this.choices[this.index];
     this.button.textContent = agent?.alias || "Agent";
-    this.button.title = this.choices.length > 1 ? "Switch agent" : "Current agent";
+    this.button.title = this.choices.length > 1 ? "Switch agent / Orchestrator" : "Current agent";
     this.button.disabled = this.choices.length < 2;
     this.button.setAttribute("aria-label", `${this.button.title}: ${agent?.alias || "Agent"}`);
   }

@@ -102,7 +102,9 @@ function newAgentId(): string {
 
 function profileFromDefaults(alias = "New agent"): DelegationAgent {
   return {
-    id: newAgentId(), alias,
+    id: newAgentId(),
+    alias,
+    description: "",
     brain_source: "acpx",
     brain_base_url: $in("brain_base_url").value,
     brain_api_key: $in("brain_api_key").value,
@@ -181,6 +183,7 @@ function renderDelegationAgents(agents: DelegationAgent[]): void {
       <summary><span class="agent-summary-name">${escapeHtml(agent.alias || "Unnamed agent")}</span><span class="agent-summary-source">${escapeHtml(friendlySource(agent.brain_source))}</span></summary>
       <div class="agent-profile-fields">
         ${profileText("alias", "Name", agent.alias)}
+        ${profileText("description", "Role / Capabilities (for auto-orchestration)", agent.description || "")}
         <label><span>Powered by</span><select data-agent-field="brain_source">
           <option value="acpx">Coding agent</option>
           <option value="remote">Cloud / API endpoint</option><option value="local">Local model</option>

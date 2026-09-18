@@ -817,6 +817,15 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
                 Err(e) => req.respond(json_response(json!({ "error": e.to_string() }), 400)),
             }
         }
+        (Method::Post, "/api/route") => {
+            let body = read_body(&mut req);
+            let request = body.get("request").and_then(Value::as_str).unwrap_or_default();
+            let agent_id = body.get("agent_id").and_then(Value::as_str);
+            match crate::openjev::route_task(app, &cfg, request, agent_id) {
+                Ok(decision) => req.respond(json_response(json!(decision), 200)),
+                Err(e) => req.respond(json_response(json!({ "error": e.to_string() }), 500)),
+            }
+        }
         (Method::Post, "/api/delegate") => {
             let body = read_body(&mut req);
             let request = body.get("request").and_then(Value::as_str).unwrap_or_default();
