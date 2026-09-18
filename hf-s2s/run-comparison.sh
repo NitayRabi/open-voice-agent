@@ -136,8 +136,7 @@ if [[ "$PLATFORM" == "Darwin" ]]; then
     --stream_batch_sentences 1 \
     --init_chat_prompt "You are a natural, concise voice assistant. Speak conversationally. Use delegate_to_agent for longer, agentic, coding, computer, or personal-automation tasks. When delegation starts, immediately say which agent started and that you will report back; never imply it already finished. When a delegation status update arrives, always speak its success or failure and briefly report the result. Do not delegate a status notification again." &
 else
-  LD_LIBRARY_PATH="/lib64:${LD_LIBRARY_PATH:-}" \
-    "$TTS_HIP_BIN" "$TTS_HIP_MODEL_DIR" "127.0.0.1:${TTS_HIP_PORT}" 240 &
+  "$TTS_HIP_BIN" "$TTS_HIP_MODEL_DIR" "127.0.0.1:${TTS_HIP_PORT}" 240 &
   tts_hip_pid="$!"
   children+=("$tts_hip_pid")
 

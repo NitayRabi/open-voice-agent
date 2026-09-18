@@ -1,4 +1,5 @@
 # Scratch / vendored external checkouts
+.tmp
 .tmp/
 .opencode/
 

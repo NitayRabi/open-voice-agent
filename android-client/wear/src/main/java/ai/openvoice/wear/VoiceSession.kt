@@ -14,6 +14,7 @@ import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.NoiseSuppressor
 import android.os.SystemClock
 import android.util.Base64
+import android.util.Log
 import androidx.core.content.ContextCompat
 import okhttp3.Request
 import okhttp3.Response
@@ -52,6 +53,7 @@ class VoiceSession(
     private val active = AtomicBoolean(false)
     private val stopped = AtomicBoolean(false)
     @Volatile private var responseActive = false
+    @Volatile private var pendingResponseCreate = false
     @Volatile private var microphoneMutedUntil = 0L
     private val reports = ArrayDeque<String>()
 
@@ -119,6 +121,9 @@ class VoiceSession(
     fun stop(notify: Boolean = true) {
         stopped.set(true)
         active.set(false)
+        pendingResponseCreate = false
+        responseActive = false
+        synchronized(reports) { reports.clear() }
         captureThread?.interrupt()
         captureThread = null
         releaseAudio()
@@ -220,10 +225,26 @@ class VoiceSession(
             "response.function_call_arguments.done" -> handleFunction(message)
             "response.done" -> {
                 responseActive = false
-                event(State.LISTENING, null)
-                flushReport()
+                if (pendingResponseCreate) {
+                    pendingResponseCreate = false
+                    responseActive = true
+                    socket?.send(JSONObject().put("type", "response.create").toString())
+                } else {
+                    event(State.LISTENING, null)
+                    flushReport()
+                }
             }
-            "error" -> event(State.ERROR, message.optJSONObject("error")?.optString("message") ?: "Realtime error")
+            "error" -> {
+                val err = message.optJSONObject("error")
+                val errType = err?.optString("type") ?: ""
+                val errMsg = err?.optString("message") ?: "Realtime error"
+                if (errType == "conversation_already_has_active_response") {
+                    Log.w("VoiceSession", "Ignored non-fatal active response error: $errMsg")
+                    responseActive = true
+                    return
+                }
+                event(State.ERROR, errMsg)
+            }
         }
     }
 
@@ -288,9 +309,13 @@ class VoiceSession(
                     .put("output", "Handed to the brain. Tell the user briefly that you're on it."),
             )
         socket?.send(output.toString())
-        responseActive = true
-        socket?.send(JSONObject().put("type", "response.create").toString())
         event(State.THINKING, "Handing off…")
+        if (responseActive) {
+            pendingResponseCreate = true
+        } else {
+            responseActive = true
+            socket?.send(JSONObject().put("type", "response.create").toString())
+        }
         val agentId = selectedAgentId()
         node.delegate(request, agentId) { result ->
             delegationEvent(
@@ -311,7 +336,7 @@ class VoiceSession(
     }
 
     private fun flushReport() {
-        if (responseActive || stopped.get()) return
+        if (responseActive || pendingResponseCreate || stopped.get()) return
         val text = synchronized(reports) { if (reports.isEmpty()) null else reports.removeFirst() } ?: return
         val content = JSONArray().put(JSONObject().put("type", "input_text").put("text", text))
         val item = JSONObject().put("type", "message").put("role", "user").put("content", content)

@@ -59,7 +59,10 @@ internal fun parsePairingResponse(raw: String): PairingCredential {
 }
 
 class NodeClient(baseUrl: String, accessToken: String, trustSelfSigned: Boolean) : Closeable {
-    val http: OkHttpClient = if (trustSelfSigned) insecureClient() else OkHttpClient()
+    val http: OkHttpClient = (if (trustSelfSigned) insecureClient().newBuilder() else OkHttpClient.Builder())
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .build()
     private val delegationHttp = http.newBuilder()
         // Delegations run asynchronously from the voice UI and can legitimately
         // take minutes. Completion, rather than an arbitrary socket idle period,

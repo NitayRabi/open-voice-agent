@@ -915,8 +915,8 @@ fn handle_request(app: &AppHandle, events: &Events, stop: &AtomicBool, mut req: 
             ))
         },
         (Method::Post, "/api/backend/start") => {
-            if !privileged(&req, &access) {
-                return void_respond(req, json_response(json!({"error":"backend can only be controlled locally or with the admin token"}), 403));
+            if !privileged(&req, &access) && !matches!(access, Access::Device { .. }) {
+                return void_respond(req, json_response(json!({"error":"backend can only be controlled locally, with the admin token, or from a paired device"}), 403));
             }
             let st = app.state::<AppState>();
             let c = st.settings.lock().clone();
@@ -964,6 +964,18 @@ fn proxy_realtime(app: &AppHandle, cfg: &Settings, stop: &AtomicBool, req: Reque
         return;
     };
 
+    if cfg.manage_backend {
+        let backend = &app.state::<AppState>().backend;
+        if !backend.is_running() {
+            let _ = backend.start(app, cfg);
+        }
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline && !backend.is_ready(&cfg.health_url) && !stop.load(Ordering::Relaxed) {
+            backend.touch(app);
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+
     let offered_protocols = req.headers().iter().find(|h| h.field.equiv("Sec-WebSocket-Protocol"))
         .map(|h| h.value.as_str()).unwrap_or("");
     let safe_protocols = offered_protocols.split(',').map(str::trim).filter(|value| {
@@ -980,6 +992,7 @@ fn proxy_realtime(app: &AppHandle, cfg: &Settings, stop: &AtomicBool, req: Reque
         void_respond(req, json_response(json!({"error":"speech backend unavailable"}), 502));
         return;
     };
+    app.state::<AppState>().backend.touch(app);
     if let tungstenite::stream::MaybeTlsStream::Plain(stream) = upstream.get_mut() {
         let _ = stream.set_read_timeout(Some(Duration::from_millis(2)));
     }
@@ -1013,6 +1026,7 @@ fn proxy_realtime(app: &AppHandle, cfg: &Settings, stop: &AtomicBool, req: Reque
             Ok(message) => message,
             Err(_) => break,
         };
+        app.state::<AppState>().backend.touch(app);
         let closing = matches!(incoming, Message::Close(_));
         if upstream.send(incoming).is_err() { break; }
 

@@ -108,7 +108,9 @@ class ACPAgent:
                                        "result": {"outcome": {"outcome": "cancelled"}}})
 
         try:
-            return await asyncio.wait_for(receive(), timeout=self.timeout)
+            if self.timeout > 0:
+                return await asyncio.wait_for(receive(), timeout=self.timeout)
+            return await receive()
         except asyncio.TimeoutError as exc:
             raise ACPError(f"{self.name} did not finish within {self.timeout:g} seconds") from exc
 
@@ -176,8 +178,8 @@ class ACPFacade:
                                                 for item in aliases):
             raise ValueError("ACP provider aliases must be a list of non-empty strings")
         timeout = float(definition.get("timeoutSeconds", 180))
-        if not 1 <= timeout <= 3600:
-            raise ValueError("ACP provider timeout must be between 1 and 3600 seconds")
+        if timeout < 0 or (0 < timeout < 1) or timeout > 3600:
+            raise ValueError("ACP provider timeout must be 0 (no timeout) or between 1 and 3600 seconds")
         return {
             "displayName": str(definition.get("displayName", name)).strip() or name,
             "aliases": list(dict.fromkeys(item.strip() for item in aliases)),

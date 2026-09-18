@@ -121,7 +121,8 @@ impl BackendManager {
         let mut guard = self.child.lock();
         match guard.as_mut() {
             Some(c) => match c.try_wait() {
-                Ok(Some(_)) => {
+                Ok(Some(status)) => {
+                    eprintln!("[backend] process exited with status: {status:?}");
                     #[cfg(unix)]
                     unsafe {
                         // The supervisor normally cleans its group via its EXIT
@@ -257,19 +258,6 @@ impl BackendManager {
         // still giving Bash's cleanup trap a chance to reap its children.
         #[cfg(unix)]
         cmd.process_group(0);
-        #[cfg(target_os = "linux")]
-        // If the desktop process crashes or is SIGKILLed, ask the kernel to
-        // terminate Bash. Bash can then run the same cleanup trap it uses for
-        // normal app shutdown instead of leaving GPU workers orphaned.
-        unsafe {
-            cmd.pre_exec(|| {
-                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) == 0 {
-                    Ok(())
-                } else {
-                    Err(std::io::Error::last_os_error())
-                }
-            });
-        }
         for (k, v) in &cfg.launch_env {
             cmd.env(k, v);
         }
@@ -323,12 +311,18 @@ impl BackendManager {
                 std::thread::spawn(move || {
                     let reader = BufReader::new(stream);
                     for line in reader.lines().map_while(Result::ok) {
+                        eprintln!("[{name}] {line}");
                         let _ = app.emit("backend-log", format!("[{name}] {line}"));
                     }
                 });
             }
         }
 
+        eprintln!(
+            "[app] launched: {} (cwd {})",
+            cfg.launch_command.join(" "),
+            cwd.display()
+        );
         let _ = app.emit(
             "backend-log",
             format!(

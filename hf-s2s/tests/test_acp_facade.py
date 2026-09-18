@@ -37,6 +37,31 @@ class ACPFacadeTests(unittest.IsolatedAsyncioTestCase):
                 "result": "delegated successfully",
             })
 
+    async def test_supports_zero_timeout_for_completion_driven_agent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "agents.json"
+            config_path.write_text(json.dumps({
+                "defaultAgent": "test",
+                "agents": {
+                    "test": {
+                        "command": sys.executable,
+                        "args": [str(HERE / "fake_acp.py")],
+                        "cwd": str(HERE),
+                        "timeoutSeconds": 0,
+                    }
+                },
+            }))
+            facade = ACPFacade(config_path)
+            try:
+                result = await facade.delegate("do something")
+            finally:
+                await facade.close()
+            self.assertEqual(result, {
+                "agent": "test",
+                "name": "test",
+                "result": "delegated successfully",
+            })
+
     async def test_rejects_unknown_agent_without_starting_a_process(self):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "agents.json"

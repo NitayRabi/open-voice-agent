@@ -25,6 +25,7 @@ class VoiceSession(
     private var captureThread: Thread? = null
     private val active = AtomicBoolean(false)
     @Volatile private var responseActive = false
+    @Volatile private var pendingResponseCreate = false
     private val reports = ArrayDeque<String>()
 
     @SuppressLint("MissingPermission")
@@ -55,7 +56,11 @@ class VoiceSession(
     }
 
     fun stop() {
-        active.set(false); releaseAudio()
+        active.set(false)
+        pendingResponseCreate = false
+        responseActive = false
+        synchronized(reports) { reports.clear() }
+        releaseAudio()
         socket?.close(1000, "stopped"); socket = null; event("idle", null)
     }
 
@@ -78,8 +83,10 @@ class VoiceSession(
                     var sum = 0.0
                     val bytes = ByteArray(n * 2)
                     for (i in 0 until n) {
-                        val v = samples[i].toInt(); sum += v.toDouble() * v
-                        bytes[i * 2] = v.toByte(); bytes[i * 2 + 1] = (v shr 8).toByte()
+                        val s = samples[i]
+                        sum += s * s
+                        bytes[i * 2] = (s.toInt() and 0xff).toByte()
+                        bytes[i * 2 + 1] = ((s.toInt() shr 8) and 0xff).toByte()
                     }
                     event("level", (kotlin.math.sqrt(sum / n) / 32768.0).toString())
                     socket?.send(JSONObject().put("type", "input_audio_buffer.append").put("audio", Base64.encodeToString(bytes, Base64.NO_WRAP)).toString())
@@ -107,8 +114,11 @@ class VoiceSession(
         if (settings.delegationEnabled) {
             val params = JSONObject().put("type", "object").put("properties", JSONObject().put("request", JSONObject().put("type", "string")))
                 .put("required", JSONArray().put("request"))
-            session.put("tools", JSONArray().put(JSONObject().put("type", "function").put("name", settings.delegationToolName).put("description", settings.delegationToolDescription).put("parameters", params))).put("tool_choice", "auto")
-        } else session.put("tools", JSONArray()).put("tool_choice", "none")
+            session.put("tools", JSONArray().put(JSONObject().put("type", "function").put("name", settings.delegationToolName).put("description", "Perform a real-world task: home control, timer, search, computer use, messaging.").put("parameters", params)))
+                .put("tool_choice", "auto")
+        } else {
+            session.put("tools", JSONArray()).put("tool_choice", "none")
+        }
         return JSONObject().put("type", "session.update").put("session", session)
     }
 
@@ -121,8 +131,27 @@ class VoiceSession(
                 if (bytes.isNotEmpty()) player?.write(bytes, 0, bytes.size); event("speaking", null)
             }
             "response.function_call_arguments.done" -> handleFunction(j)
-            "response.done" -> { responseActive = false; event("listening", null); flushReport() }
-            "error" -> event("error", j.optJSONObject("error")?.optString("message") ?: "Realtime error")
+            "response.done" -> {
+                responseActive = false
+                if (pendingResponseCreate) {
+                    pendingResponseCreate = false
+                    responseActive = true
+                    socket?.send(JSONObject().put("type", "response.create").toString())
+                } else {
+                    event("listening", null)
+                    flushReport()
+                }
+            }
+            "error" -> {
+                val err = j.optJSONObject("error")
+                val errType = err?.optString("type") ?: ""
+                val errMsg = err?.optString("message") ?: "Realtime error"
+                if (errType == "conversation_already_has_active_response") {
+                    responseActive = true
+                    return
+                }
+                event("error", errMsg)
+            }
         }
     }
 
@@ -130,7 +159,13 @@ class VoiceSession(
         val callId = j.optString("call_id")
         val request = runCatching { JSONObject(j.optString("arguments", "{}")).optString("request") }.getOrDefault("")
         socket?.send(JSONObject().put("type", "conversation.item.create").put("item", JSONObject().put("type", "function_call_output").put("call_id", callId).put("output", "Handed to the brain. Tell the user briefly that you're on it.")).toString())
-        responseActive = true; socket?.send(JSONObject().put("type", "response.create").toString()); event("delegating", request)
+        event("delegating", request)
+        if (responseActive) {
+            pendingResponseCreate = true
+        } else {
+            responseActive = true
+            socket?.send(JSONObject().put("type", "response.create").toString())
+        }
         val agentId = selectedAgentId()
         node.delegate(request, agentId) { result ->
             val report = result.fold(
@@ -144,7 +179,7 @@ class VoiceSession(
     }
 
     private fun flushReport() {
-        if (responseActive) return
+        if (responseActive || pendingResponseCreate) return
         val text = synchronized(reports) { if (reports.isEmpty()) null else reports.removeFirst() } ?: return
         val content = JSONArray().put(JSONObject().put("type", "input_text").put("text", text))
         val item = JSONObject().put("type", "message").put("role", "user").put("content", content)
