@@ -88,6 +88,12 @@ keeps ACP processes and sessions outside the speech server, starts delegations
 as background jobs, shows their queued/running/succeeded/failed state, and
 injects the final result into the live conversation so Gemma can speak it.
 
+Parakeet only understands English and European languages. For Hebrew or
+mixed Hebrew/English speech, choose **Settings → Speech → Speech recognition →
+Whisper large-v3-turbo** (standalone: `HF_S2S_STT=whisper-turbo ./run.sh`).
+It detects the language per turn for roughly 200 ms more latency. Qwen3-TTS
+cannot speak Hebrew, so that mode asks the model to reply in English.
+
 Providers are configured in [`hf-s2s/agents.json`](hf-s2s/agents.json) and can
 also be managed in **Settings → ACP providers**. Each provider has a command,
 arguments, working directory, timeout, optional environment, display name,

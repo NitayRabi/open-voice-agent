@@ -19,7 +19,7 @@
           <h2>Let’s get your voice agent ready</h2>
           <p>We’ll configure the conversational model, the capable model used for delegated tasks, and verify everything required to start.</p>
           <div class="pipeline-summary">
-            <span>Parakeet speech recognition</span><b>→</b><span>Your conversational model</span><b>→</b><span>Natural speech</span>
+            <span>On-device speech recognition</span><b>→</b><span>Your conversational model</span><b>→</b><span>Natural speech</span>
           </div>
         </section>
 
@@ -133,7 +133,15 @@
     <main>
       <!-- SPEECH -->
       <section id="tab-speech" class="tab active">
-        <p class="muted">Voice runs through the built-in Parakeet → conversational model → speech pipeline.</p>
+        <p class="muted">Voice runs through the built-in speech recognition → conversational model → speech pipeline.</p>
+        <label>
+          <span>Speech recognition</span>
+          <select id="speech_stt">
+            <option value="parakeet">Parakeet — fastest, English and European languages (Recommended)</option>
+            <option value="whisper-turbo">Whisper large-v3-turbo — any language incl. Hebrew, mixed-language turns (~200 ms slower)</option>
+          </select>
+          <small>Replies are still spoken in a supported voice language; Hebrew speech is answered in English.</small>
+        </label>
         <label>
           <span>Run conversational model</span>
           <select id="speech_model_source">

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cascaded voice agent: Parakeet -> local or remote conversational model -> Qwen3-TTS.
+# Cascaded voice agent: Parakeet or Whisper -> local or remote conversational model -> Qwen3-TTS.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -64,6 +64,45 @@ TTS_HIP_BIN="${HF_S2S_TTS_HIP_BIN:-$SHARED_ROOT/.tmp/qwen3-tts-hip/target/releas
 TTS_HIP_MODEL_DIR="${HF_S2S_TTS_HIP_MODEL_DIR:-/home/nitayrabi/.cache/huggingface/hub/models--Qwen--Qwen3-TTS-12Hz-0.6B-CustomVoice/snapshots/85e237c12c027371202489a0ec509ded67b5e4b5}"
 TTS_HIP_PORT="${HF_S2S_TTS_HIP_PORT:-8021}"
 
+# Speech recognition. Parakeet is the fastest but only understands European
+# languages. Whisper large-v3-turbo detects the language of every turn, so it
+# handles Hebrew and Hebrew/English mixed speech for roughly 200 ms more per turn.
+STT="${HF_S2S_STT:-parakeet}"
+INIT_CHAT_PROMPT="You are a natural, concise voice assistant. Speak conversationally. Use delegate_to_agent for longer, agentic, coding, computer, or personal-automation tasks. When delegation starts, immediately say which agent started and that you will report back; never imply it already finished. When a delegation status update arrives, always speak its success or failure and briefly report the result. Do not delegate a status notification again."
+case "$STT" in
+  parakeet)
+    if [[ "$PLATFORM" == "Darwin" ]]; then stt_device=mps; else stt_device=cuda; fi
+    STT_ARGS=(
+      --stt parakeet-tdt
+      --parakeet_tdt_device "$stt_device"
+      --parakeet_tdt_compute_type float16
+    )
+    ;;
+  whisper-turbo)
+    if [[ "$PLATFORM" == "Darwin" ]]; then
+      STT_ARGS=(
+        --stt mlx-audio-whisper
+        --mlx_audio_whisper_model_name mlx-community/whisper-large-v3-turbo
+        --language auto
+      )
+    else
+      STT_ARGS=(
+        --stt whisper
+        --stt_model_name openai/whisper-large-v3-turbo
+        --stt_device cuda
+        --stt_torch_dtype float16
+        --language auto
+      )
+    fi
+    # Qwen3-TTS cannot speak Hebrew, so answer in English whatever was heard.
+    INIT_CHAT_PROMPT="$INIT_CHAT_PROMPT Always reply in English, even when the user speaks another language."
+    ;;
+  *)
+    echo "Unknown HF_S2S_STT '${STT}'; expected 'parakeet' or 'whisper-turbo'." >&2
+    exit 1
+    ;;
+esac
+
 children=()
 cleanup() {
   for pid in "${children[@]:-}"; do
@@ -120,9 +159,7 @@ if [[ "$PLATFORM" == "Darwin" ]]; then
   "$VENV/bin/speech-to-speech" serve \
     --mac-optimal-settings \
     --host 127.0.0.1 --port "$BACKEND_PORT" \
-    --stt parakeet-tdt \
-    --parakeet_tdt_device mps \
-    --parakeet_tdt_compute_type float16 \
+    "${STT_ARGS[@]}" \
     --llm_backend chat-completions \
     --model_name "$LLM_NAME" \
     --responses_api_base_url "$LLM_BASE_URL" \
@@ -134,7 +171,7 @@ if [[ "$PLATFORM" == "Darwin" ]]; then
     --qwen3_tts_speaker Aiden \
     --qwen3_tts_language auto \
     --stream_batch_sentences 1 \
-    --init_chat_prompt "You are a natural, concise voice assistant. Speak conversationally. Use delegate_to_agent for longer, agentic, coding, computer, or personal-automation tasks. When delegation starts, immediately say which agent started and that you will report back; never imply it already finished. When a delegation status update arrives, always speak its success or failure and briefly report the result. Do not delegate a status notification again." &
+    --init_chat_prompt "$INIT_CHAT_PROMPT" &
 else
   LD_LIBRARY_PATH="/lib64:${LD_LIBRARY_PATH:-}" \
     "$TTS_HIP_BIN" "$TTS_HIP_MODEL_DIR" "127.0.0.1:${TTS_HIP_PORT}" 240 &
@@ -154,9 +191,7 @@ else
 
   QWEN3_TTS_HIP_URL="http://127.0.0.1:${TTS_HIP_PORT}" "$VENV/bin/speech-to-speech" serve \
     --host 127.0.0.1 --port "$BACKEND_PORT" \
-    --stt parakeet-tdt \
-    --parakeet_tdt_device cuda \
-    --parakeet_tdt_compute_type float16 \
+    "${STT_ARGS[@]}" \
     --llm_backend chat-completions \
     --model_name "$LLM_NAME" \
     --responses_api_base_url "$LLM_BASE_URL" \
@@ -171,7 +206,7 @@ else
     --qwen3_tts_language auto \
     --qwen3_tts_parity_mode True \
     --stream_batch_sentences 1 \
-    --init_chat_prompt "You are a natural, concise voice assistant. Speak conversationally. Use delegate_to_agent for longer, agentic, coding, computer, or personal-automation tasks. When delegation starts, immediately say which agent started and that you will report back; never imply it already finished. When a delegation status update arrives, always speak its success or failure and briefly report the result. Do not delegate a status notification again." &
+    --init_chat_prompt "$INIT_CHAT_PROMPT" &
 fi
 backend_pid="$!"
 children+=("$backend_pid")

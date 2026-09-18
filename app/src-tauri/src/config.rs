@@ -172,6 +172,9 @@ fn d_speech_model() -> String {
 fn d_local() -> String {
     "local".into()
 }
+fn d_speech_stt() -> String {
+    "parakeet".into()
+}
 fn d_web_bind() -> String {
     "127.0.0.1".into()
 }
@@ -208,6 +211,10 @@ pub struct Settings {
     pub speech_remote_model: String,
     #[serde(default)]
     pub speech_remote_api_key: String,
+    /// Speech recognition: "parakeet" (fastest, European languages only) or
+    /// "whisper-turbo" (auto-detects the language per turn, e.g. Hebrew).
+    #[serde(default = "d_speech_stt")]
+    pub speech_stt: String,
     #[serde(default)]
     pub mic_device_id: String,
     #[serde(default)]
@@ -461,6 +468,7 @@ impl Settings {
             && self.speech_remote_base_url == o.speech_remote_base_url
             && self.speech_remote_model == o.speech_remote_model
             && self.speech_remote_api_key == o.speech_remote_api_key
+            && self.speech_stt == o.speech_stt
             && self.web_tls_cert == o.web_tls_cert
             && self.web_tls_key == o.web_tls_key
             && self.web_tailscale == o.web_tailscale
