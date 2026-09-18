@@ -1,6 +1,6 @@
 import { VoicePipeline } from "./lib/pipeline.js";
 import { getSettings, routeDelegation, delegate, listen, emit, invoke, currentWindow } from "./lib/tauri.js";
-import { StormOrb } from "./lib/storm-orb.js";
+import { IconOrb } from "./lib/icon-orb.js";
 import { TaskToast } from "./lib/task-toast.js";
 import { element } from "./lib/dom.js";
 import { ensureVoiceBackend, keepVoiceBackendAlive } from "./lib/backend-lifecycle.js";
@@ -10,7 +10,7 @@ import { AgentSelection } from "./lib/agent-selection.js";
 const orb = element("orb");
 const gear = element("gear");
 const caption = element("caption");
-const visual = new StormOrb(orb);
+const visual = new IconOrb(orb);
 const taskToast = new TaskToast({ compact: true });
 const agentSelection = new AgentSelection(element("agent-switch") as HTMLButtonElement);
 
@@ -46,7 +46,7 @@ function setCaption(state: PipelineState): void {
 
 pipeline.addEventListener("state", (e) => {
   const { state } = e.detail;
-  orb.className = `orb state-${state}${pipeline.muted ? " state-muted" : ""}${visual.gl ? "" : " orb-webgl-fallback"}`;
+  orb.className = `orb state-${state}${pipeline.muted ? " state-muted" : ""}`;
   visual.setState(state);
   setCaption(state);
 });

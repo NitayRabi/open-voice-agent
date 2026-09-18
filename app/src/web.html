@@ -8,7 +8,7 @@
   </head>
   <body>
     <header>
-      <div class="brand-lockup"><span class="brand-mark" aria-hidden="true"></span><span class="brand">Open Voice Agent</span></div>
+      <div class="brand-lockup"><img class="brand-mark" src="./assets/icon.png" alt="" aria-hidden="true" /><span class="brand">Open Voice Agent</span></div>
       <a id="settings-link" href="./settings" aria-label="Open settings"><span>Settings</span></a>
     </header>
 
@@ -16,20 +16,9 @@
       <section class="voice-card">
       <div class="orb-row">
       <div id="orb" class="orb state-idle" role="button" tabindex="0" aria-label="Toggle voice">
-        <span class="ring"></span>
-        <span class="core">
-          <svg class="ico ico-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="9" y="2" width="6" height="12" rx="3" fill="currentColor" stroke="none" />
-            <path d="M5 10a7 7 0 0 0 14 0" /><line x1="12" y1="19" x2="12" y2="22" />
-          </svg>
-          <span class="ico ico-dots"><i></i><i></i><i></i></span>
-          <svg class="ico ico-wave" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-            <path d="M4 12h2l2-5 3 12 3-16 2 9h4" />
-          </svg>
-          <svg class="ico ico-err" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <circle cx="12" cy="12" r="9" /><line x1="12" y1="7" x2="12" y2="13" /><line x1="12" y1="16.5" x2="12" y2="16.5" />
-          </svg>
-        </span>
+        <div class="orb-glow-bg" aria-hidden="true"></div>
+        <div class="orb-glow-pulse" aria-hidden="true"></div>
+        <img class="orb-icon" src="./assets/icon.png" alt="Open Voice Agent" draggable="false" />
       </div>
       <button id="agent-switch" type="button">Agent</button>
       </div>
