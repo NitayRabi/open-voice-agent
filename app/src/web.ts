@@ -1,6 +1,6 @@
 import { VoicePipeline } from "./lib/pipeline.js";
 import { getSettings, routeDelegation, delegate, listen } from "./lib/tauri.js";
-import { StormOrb } from "./lib/storm-orb.js";
+import { IconOrb } from "./lib/icon-orb.js";
 import { TaskToast } from "./lib/task-toast.js";
 import { element } from "./lib/dom.js";
 import { ensureVoiceBackend, keepVoiceBackendAlive } from "./lib/backend-lifecycle.js";
@@ -12,7 +12,7 @@ const orb = element("orb");
 const caption = element("caption");
 const notice = element("notice");
 const feed = element("transcript");
-const visual = new StormOrb(orb);
+const visual = new IconOrb(orb);
 const taskToast = new TaskToast();
 const agentSelection = new AgentSelection(element("agent-switch") as HTMLButtonElement);
 
@@ -67,7 +67,7 @@ function addMsg(role: string, text: string): void {
 }
 
 pipeline.addEventListener("state", (e) => {
-  orb.className = `orb state-${e.detail.state}${visual.gl ? "" : " orb-webgl-fallback"}`;
+  orb.className = `orb state-${e.detail.state}`;
   visual.setState(e.detail.state);
   caption.textContent = CAPTIONS[e.detail.state] ?? e.detail.state;
 });
