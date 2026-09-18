@@ -270,6 +270,10 @@ impl BackendManager {
                 }
             });
         }
+        if !matches!(cfg.speech_stt.as_str(), "parakeet" | "whisper-turbo") {
+            return Err(format!("unknown speech recognition model {:?}", cfg.speech_stt));
+        }
+        cmd.env("HF_S2S_STT", &cfg.speech_stt);
         for (k, v) in &cfg.launch_env {
             cmd.env(k, v);
         }

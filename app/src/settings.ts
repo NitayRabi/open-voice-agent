@@ -1,5 +1,5 @@
 import { getSettings, saveSettings, invoke, listen, isWeb } from "./lib/tauri.js";
-import { element as $, input as $in, select as $sel, valueElement } from "./lib/dom.js";
+import { element as $, input as $in, select as $sel, textarea, valueElement } from "./lib/dom.js";
 import { errorText } from "./lib/errors.js";
 import type { AcpxAgent, AcpxStatus, BrainSource, DelegationAgent, ModelInfo, ModelSource, ModelsList, Settings } from "./lib/types.js";
 
@@ -20,6 +20,7 @@ const FIELDS = {
   speech_remote_base_url: "value",
   speech_remote_model: "value",
   speech_remote_api_key: "value",
+  speech_stt: "value",
   voice: "value",
   sample_rate: "int",
   mic_device_id: "value",
@@ -293,6 +294,15 @@ $sel("brain_source").addEventListener("change", () => {
   if ($sel("brain_source").value === "acpx") void renderAcpx();
 });
 $sel("speech_model_source").addEventListener("change", updateSpeechVisibility);
+// Qwen3-TTS cannot speak Hebrew, so ask for English replies when switching to
+// the multilingual recognizer. The rule stays visible and editable in the prompt.
+const ENGLISH_REPLY_RULE = "Always reply in English, even when the user speaks another language.";
+$sel("speech_stt").addEventListener("change", () => {
+  const instructions = textarea("instructions");
+  if ($sel("speech_stt").value === "whisper-turbo" && !instructions.value.includes(ENGLISH_REPLY_RULE)) {
+    instructions.value = `${instructions.value.trimEnd()} ${ENGLISH_REPLY_RULE}`.trimStart();
+  }
+});
 $sel("speech_model").addEventListener("change", () => ($in("speech_model_path").value = ""));
 
 $("generate_web_token").addEventListener("click", () => {
@@ -790,7 +800,7 @@ function renderSetupReview(): void {
     ? `${$in("setup_speech_remote_name").value} at ${$in("setup_speech_remote_url").value}`
     : (speech?.name || selectedSpeechModel());
   const items: [string, string | null | undefined][] = [
-    ["Voice pipeline", "Parakeet → conversational model → speech"],
+    ["Voice pipeline", `${current.speech_stt === "whisper-turbo" ? "Whisper turbo" : "Parakeet"} → conversational model → speech`],
     ["Conversational model", speechDescription],
     ["Delegation", $sel("setup_brain_source").value === "acpx"
       ? `${resolvedAcpxAgent($sel("setup_acpx_agent"))?.label ?? "Coding agent"} via acpx`
