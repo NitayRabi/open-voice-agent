@@ -2,6 +2,10 @@ package ai.openvoice.wear
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
@@ -44,6 +48,17 @@ class MainActivity : ComponentActivity() {
         if (granted) beginTalk() else showTalkScreen("Microphone permission denied")
     }
 
+    private val syncReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val saved = store.load() ?: return
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                refreshAgents(saved)
+                showTalkScreen("Synced from phone")
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -60,9 +75,61 @@ class MainActivity : ComponentActivity() {
             addView(container, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         })
         val saved = store.load()
-        if (saved == null) showPairingScreen() else {
+        if (saved == null) {
+            syncAndPair(initialMessage = "Connecting to phone companion…")
+        } else {
             showTalkScreen()
             refreshAgents(saved)
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        ContextCompat.registerReceiver(
+            this,
+            syncReceiver,
+            IntentFilter(WearConfigSyncHelper.ACTION_CONFIG_SYNCED),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+    }
+
+    override fun onStop() {
+        try {
+            unregisterReceiver(syncReceiver)
+        } catch (_: Exception) {}
+        super.onStop()
+    }
+
+    private fun syncAndPair(
+        initialMessage: String,
+        fallbackUrl: String = "",
+        fallbackTrust: Boolean = false,
+    ) {
+        stopVoice(false)
+        showingTasks = false
+        container.removeAllViews()
+        title("Pair watch")
+        container.addView(caption(initialMessage), match(dp(5)))
+        container.addView(caption("Make sure Open Voice is paired on your phone."), match(dp(4)))
+        container.addView(actionButton("Enter manually") {
+            showPairingScreen(initialUrl = fallbackUrl, initialTrust = fallbackTrust)
+        }, match(dp(12)))
+
+        WearConfigSyncHelper.requestSyncFromPhone(this) { success ->
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                val current = store.load()
+                if (current != null) {
+                    showTalkScreen("Synced from phone")
+                    refreshAgents(current)
+                } else if (!success) {
+                    showPairingScreen(
+                        message = "Could not reach phone. Enter manually:",
+                        initialUrl = fallbackUrl,
+                        initialTrust = fallbackTrust,
+                    )
+                }
+            }
         }
     }
 
@@ -77,7 +144,7 @@ class MainActivity : ComponentActivity() {
         showingTasks = false
         container.removeAllViews()
         title("Pair watch")
-        container.addView(caption(message ?: "Connect directly to your Open Voice node"), match(dp(5)))
+        container.addView(caption(message ?: "Connect directly or sync with phone"), match(dp(5)))
         val url = field("Node URL", initialUrl, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI)
         val code = field(
             "Pairing code",
@@ -102,6 +169,17 @@ class MainActivity : ComponentActivity() {
             }
             exchangePairingCode(cleanUrl, cleanCode, trust.isChecked)
         }, match(dp(10)))
+        container.addView(actionButton("Sync from phone") {
+            syncAndPair(
+                initialMessage = "Connecting to phone companion…",
+                fallbackUrl = url.text.toString().trim(),
+                fallbackTrust = trust.isChecked,
+            )
+        }.apply {
+            textSize = 11f
+            setTextColor(MUTED)
+            background = null
+        }, match(dp(6)))
     }
 
     private fun exchangePairingCode(url: String, code: String, trustSelfSigned: Boolean) {
@@ -255,7 +333,11 @@ class MainActivity : ComponentActivity() {
         container.addView(actionButton("Cancel") { showTalkScreen() }, match(dp(14)))
         container.addView(actionButton("Forget & re-pair") {
             store.clear()
-            showPairingScreen(initialUrl = saved.url, initialTrust = saved.trustSelfSigned)
+            syncAndPair(
+                initialMessage = "Re-syncing with phone companion…",
+                fallbackUrl = saved.url,
+                fallbackTrust = saved.trustSelfSigned,
+            )
         }, match(dp(6)))
     }
 
@@ -399,15 +481,10 @@ class MainActivity : ComponentActivity() {
         orb?.state = "idle"
         val oldSession = voiceSession
         voiceSession = null
-        oldSession?.stop(false)
+        oldSession?.stop()
         client?.close()
         client = null
-        if (notify) showTalkScreen("Tap to talk")
-    }
-
-    override fun onStop() {
-        stopVoice(false)
-        super.onStop()
+        if (notify) renderVoiceStatus("Tap to talk")
     }
 
     override fun onDestroy() {
@@ -415,44 +492,47 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    private fun field(hintText: String, initialValue: String, inputType: Int) = EditText(this).apply {
+        hint = hintText
+        setText(initialValue)
+        this.inputType = inputType
+        setHintTextColor(Color.rgb(105, 115, 140))
+        setTextColor(Color.WHITE)
+        textSize = 13f
+        setPadding(dp(12), dp(9), dp(12), dp(9))
+        background = roundedBackground(Color.rgb(27, 34, 50), dp(14).toFloat())
+    }
+
+    private fun actionButton(text: String, onClick: () -> Unit) = Button(this).apply {
+        this.text = text
+        isAllCaps = false
+        textSize = 13f
+        setTextColor(Color.WHITE)
+        background = roundedBackground(ACCENT, dp(18).toFloat())
+        setOnClickListener { onClick() }
+    }
+
     private fun title(text: String) {
         container.addView(TextView(this).apply {
             this.text = text
-            textSize = 20f
+            textSize = 15f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
         }, match())
     }
 
-    private fun caption(text: String): TextView = TextView(this).apply {
+    private fun caption(text: String) = TextView(this).apply {
         this.text = text
-        textSize = 13f
+        textSize = 11f
         setTextColor(MUTED)
         gravity = Gravity.CENTER
     }
 
-    private fun field(hint: String, value: String, type: Int) = EditText(this).apply {
-        this.hint = hint
-        setText(value)
-        inputType = type
-        setSingleLine(true)
-        textSize = 13f
-        setTextColor(Color.WHITE)
-        setHintTextColor(Color.rgb(116, 127, 151))
-        setPadding(dp(12), dp(8), dp(12), dp(8))
-    }
-
-    private fun actionButton(label: String, action: () -> Unit) = Button(this).apply {
-        text = label
-        isAllCaps = false
-        setOnClickListener { action() }
-    }
-
-    private fun roundedBackground(color: Int, radius: Float) = GradientDrawable().apply {
+    private fun roundedBackground(color: Int, radiusDp: Float): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(radiusDp.toInt()).toFloat()
         setColor(color)
-        cornerRadius = radius
     }
 
     private fun match(top: Int = 0) = LinearLayout.LayoutParams(
@@ -460,13 +540,14 @@ class MainActivity : ComponentActivity() {
         ViewGroup.LayoutParams.WRAP_CONTENT,
     ).apply { topMargin = top }
 
-    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private companion object {
-        val BACKGROUND = Color.rgb(8, 11, 18)
-        val STOP = Color.rgb(184, 62, 82)
-        val MUTED = Color.rgb(173, 184, 207)
-        val TASK_ACTIVE = Color.rgb(108, 210, 154)
-        const val MAX_TASKS = 8
+        val BACKGROUND = Color.rgb(9, 11, 18)
+        val ACCENT = Color.rgb(54, 94, 255)
+        val MUTED = Color.rgb(150, 161, 185)
+        val STOP = Color.rgb(235, 87, 87)
+        val TASK_ACTIVE = Color.rgb(140, 200, 255)
+        const val MAX_TASKS = 6
     }
 }

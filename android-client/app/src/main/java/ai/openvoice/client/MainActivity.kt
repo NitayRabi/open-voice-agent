@@ -62,7 +62,10 @@ class MainActivity : AppCompatActivity() {
         }
         setContentView(ScrollView(this).apply { addView(content) })
         requestRuntimePermissions()
-        if (saved != null) loadAgents(saved)
+        if (saved != null) {
+            PhoneWearSyncHelper.syncNodeToWear(this, saved)
+            loadAgents(saved)
+        }
     }
 
     private fun field(hintText: String, value: String) = EditText(this).apply {
@@ -82,10 +85,12 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     result.fold(
                         onSuccess = {
-                            store.save(SavedNode(cleanUrl, it.accessToken, it.deviceId, trustSelfSigned.isChecked))
+                            val savedNode = SavedNode(cleanUrl, it.accessToken, it.deviceId, trustSelfSigned.isChecked)
+                            store.save(savedNode)
+                            PhoneWearSyncHelper.syncNodeToWear(this, savedNode)
                             code.setText("")
                             status.text = "Paired"
-                            loadAgents(store.load()!!)
+                            loadAgents(savedNode)
                             launchVoice(withOverlay)
                         },
                         onFailure = { status.text = it.message ?: "Pairing failed" },

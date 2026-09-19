@@ -1,9 +1,10 @@
 # Open Voice for Wear OS
 
-Standalone Pixel Watch / Wear OS companion for an Open Voice node. The watch
-exchanges a pairing code for a per-device access token, stores that token and
-the node URL in Android Keystore-backed encrypted preferences, then connects
-directly to the node over HTTP and WebSocket.
+Pixel Watch / Wear OS companion for an Open Voice node. The watch can be
+configured directly by syncing with the phone app over the Wearable Data Layer,
+or paired standalone by entering a node URL and pairing code. It stores the
+per-device access token and node URL in Android Keystore-backed encrypted
+preferences, then connects directly to the node over HTTP and WebSocket.
 
 ## Build and install
 
@@ -13,16 +14,13 @@ cd android-client
 adb install -r wear/build/outputs/apk/debug/wear-debug.apk
 ```
 
-Open **Open Voice** on the watch, enter the public or LAN node URL and pairing
-code, and tap **Pair**. The code is exchanged once for a revocable watch access
-token; only that token is encrypted and retained on the watch. Tap the round
-microphone control to start a voice session; tap the stop control or leave the
-activity to close the microphone, speaker, network calls, and WebSocket. Use
-**Forget & re-pair** to erase the saved token and perform a new exchange.
-If the node exposes multiple named agents, swipe the round control left or
-right to change the current agent; its alias is shown directly below the orb.
+## Setup & Pairing
 
-Cleartext HTTP is supported for trusted LAN development. For normal use,
-prefer HTTPS with a valid certificate. The self-signed option deliberately
-relaxes certificate and hostname verification only for the selected node and
-should never be enabled on an untrusted network.
+1. **Automatic sync via Phone App (Recommended)**:
+   - Pair the phone app with your node.
+   - Open **Open Voice** on your watch; it will automatically request and receive the node URL and credentials from the paired phone companion.
+2. **Manual standalone pairing**:
+   - Open **Open Voice** on the watch and tap **Enter manually**.
+   - Enter your public or LAN node URL (e.g. `https://voice.nyr-solutions.org`) and pairing code, and tap **Pair**.
+
+Tap the round microphone control to start a voice session; tap the stop control or leave the activity to close the microphone, speaker, network calls, and WebSocket. Use **Forget & re-pair** to erase the saved token and automatically attempt to re-sync with the phone companion before falling back to manual entry. If the node exposes multiple named agents, swipe the round control left or right to change the current agent.
