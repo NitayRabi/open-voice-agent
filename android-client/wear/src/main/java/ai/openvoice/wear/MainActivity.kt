@@ -55,6 +55,9 @@ class MainActivity : ComponentActivity() {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 refreshAgents(saved)
                 showTalkScreen("Synced from phone")
+                if (shouldAutoStart(getIntent())) {
+                    requestTalk()
+                }
             }
         }
     }
@@ -80,6 +83,9 @@ class MainActivity : ComponentActivity() {
         } else {
             showTalkScreen()
             refreshAgents(saved)
+            if (shouldAutoStart(intent)) {
+                requestTalk()
+            }
         }
     }
 
@@ -98,6 +104,20 @@ class MainActivity : ComponentActivity() {
             unregisterReceiver(syncReceiver)
         } catch (_: Exception) {}
         super.onStop()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (store.load() != null && shouldAutoStart(intent)) {
+            if (!active && !starting) {
+                requestTalk()
+            }
+        }
+    }
+
+    private fun shouldAutoStart(intent: Intent?): Boolean {
+        return intent?.getBooleanExtra(EXTRA_AUTO_START, false) == true || intent?.action == ACTION_START_VOICE
     }
 
     private fun syncAndPair(
@@ -122,6 +142,9 @@ class MainActivity : ComponentActivity() {
                 if (current != null) {
                     showTalkScreen("Synced from phone")
                     refreshAgents(current)
+                    if (shouldAutoStart(intent)) {
+                        requestTalk()
+                    }
                 } else if (!success) {
                     showPairingScreen(
                         message = "Could not reach phone. Enter manually:",
@@ -197,6 +220,9 @@ class MainActivity : ComponentActivity() {
                         checkingClient.close()
                         client = null
                         showTalkScreen("Paired")
+                        if (shouldAutoStart(intent)) {
+                            requestTalk()
+                        }
                     },
                     onFailure = {
                         checkingClient.close()
@@ -542,12 +568,14 @@ class MainActivity : ComponentActivity() {
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    private companion object {
-        val BACKGROUND = Color.rgb(9, 11, 18)
+    companion object {
+        const val ACTION_START_VOICE = "ai.openvoice.wear.action.START_VOICE"
+        const val EXTRA_AUTO_START = "ai.openvoice.wear.extra.AUTO_START"
+        val BACKGROUND = Color.rgb(8, 11, 18)
         val ACCENT = Color.rgb(54, 94, 255)
-        val MUTED = Color.rgb(150, 161, 185)
-        val STOP = Color.rgb(235, 87, 87)
-        val TASK_ACTIVE = Color.rgb(140, 200, 255)
-        const val MAX_TASKS = 6
+        val STOP = Color.rgb(184, 62, 82)
+        val MUTED = Color.rgb(173, 184, 207)
+        val TASK_ACTIVE = Color.rgb(108, 210, 154)
+        const val MAX_TASKS = 8
     }
 }
