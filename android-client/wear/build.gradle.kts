@@ -27,6 +27,16 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.security:security-crypto:1.1.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.guava:guava:33.3.1-android")
+
+    // Wear OS Tiles & ProtoLayout
+    implementation("androidx.wear.tiles:tiles:1.4.1")
+    implementation("androidx.wear.protolayout:protolayout:1.2.1")
+    implementation("androidx.wear.protolayout:protolayout-material:1.2.1")
+    implementation("androidx.concurrent:concurrent-futures-ktx:1.2.0")
+
+    // Watch Face Complications
+    implementation("androidx.wear.watchface:watchface-complications-data-source-ktx:1.2.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

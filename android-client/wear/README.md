@@ -22,6 +22,24 @@ activity to close the microphone, speaker, network calls, and WebSocket. Use
 If the node exposes multiple named agents, swipe the round control left or
 right to change the current agent; its alias is shown directly below the orb.
 
+## Main Screen Widgets
+
+### 1. Wear OS Tile (Carousel Widget)
+Add the **Open Voice Agent** tile to your swipeable carousel:
+- Swipe left/right on the watch face to find or add tiles.
+- Tap **Add tile** and select **Open Voice Agent**.
+- Displays your currently active agent name and a quick-action microphone button.
+- Tapping the orb directly launches `MainActivity` and begins voice recording instantly.
+
+### 2. Watch Face Complications (Dial Widget)
+Place Open Voice on your watch face dial slots:
+- Long press your watch face, tap **Edit** / Customize, and select a complication slot.
+- Choose **Open Voice Agent** under providers.
+- Supports **Short Text**, **Monochromatic Image**, **Small Image**, and **Long Text** complication slots.
+- 1-tap activation: Tapping the complication immediately triggers voice capture with the active agent.
+
+## Security & Connectivity
+
 Cleartext HTTP is supported for trusted LAN development. For normal use,
 prefer HTTPS with a valid certificate. The self-signed option deliberately
 relaxes certificate and hostname verification only for the selected node and

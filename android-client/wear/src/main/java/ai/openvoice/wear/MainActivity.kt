@@ -2,6 +2,7 @@ package ai.openvoice.wear
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
@@ -60,10 +61,29 @@ class MainActivity : ComponentActivity() {
             addView(container, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         })
         val saved = store.load()
-        if (saved == null) showPairingScreen() else {
+        if (saved == null) {
+            showPairingScreen()
+        } else {
             showTalkScreen()
             refreshAgents(saved)
+            if (shouldAutoStart(intent)) {
+                requestTalk()
+            }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (store.load() != null && shouldAutoStart(intent)) {
+            if (!active && !starting) {
+                requestTalk()
+            }
+        }
+    }
+
+    private fun shouldAutoStart(intent: Intent?): Boolean {
+        return intent?.getBooleanExtra(EXTRA_AUTO_START, false) == true || intent?.action == ACTION_START_VOICE
     }
 
     // Direct entry for standalone pairing
@@ -462,7 +482,9 @@ class MainActivity : ComponentActivity() {
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
-    private companion object {
+    companion object {
+        const val ACTION_START_VOICE = "ai.openvoice.wear.action.START_VOICE"
+        const val EXTRA_AUTO_START = "ai.openvoice.wear.extra.AUTO_START"
         val BACKGROUND = Color.rgb(8, 11, 18)
         val STOP = Color.rgb(184, 62, 82)
         val MUTED = Color.rgb(173, 184, 207)

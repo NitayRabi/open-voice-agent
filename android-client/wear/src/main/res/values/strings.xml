@@ -2,4 +2,11 @@
 <resources>
     <string name="app_name">Open Voice</string>
     <string name="trust_self_signed">Trust self-signed TLS</string>
+    <string name="tile_name">Open Voice Agent</string>
+    <string name="tile_description">Quick talk with your Open Voice agent</string>
+    <string name="complication_name">Open Voice Agent</string>
+    <string name="complication_description">Tap to start talking to your voice agent</string>
+    <string name="tap_to_talk">Tap to talk</string>
+    <string name="pair_watch">Pair watch</string>
+    <string name="open_app_to_pair">Open app to pair</string>
 </resources>
