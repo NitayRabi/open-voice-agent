@@ -30,6 +30,9 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  padding: 20px 18px 14px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
 }
 
 .orb-row {
@@ -41,8 +44,8 @@ body {
 
 #agent-switch {
   position: absolute;
-  right: -6px;
-  bottom: 10px;
+  right: -30px;
+  bottom: 8px;
   max-width: 60px;
   padding: 4px 7px;
   overflow: hidden;
@@ -231,23 +234,24 @@ body {
 
 #gear {
   position: absolute;
-  right: 4px;
-  bottom: 4px;
-  width: 24px;
-  height: 24px;
-  padding: 4px;
+  right: -28px;
+  top: 10px;
+  width: 28px;
+  height: 28px;
+  padding: 5px;
   border: 0;
   border-radius: 50%;
   border: 1px solid var(--orb-line);
   background: var(--orb-surface);
   color: var(--orb-ink);
   cursor: pointer;
-  opacity: 0;
+  opacity: 0.78;
   transition: opacity 0.2s ease;
   z-index: 4;
 }
 
-.orb:hover #gear {
+.orb-row:hover #gear,
+#gear:focus-visible {
   opacity: 1;
 }
 
@@ -257,10 +261,11 @@ body {
 }
 
 #caption {
-  margin-top: 6px;
-  font-size: 11px;
-  line-height: 1.2;
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 16px;
   color: var(--orb-ink);
-  text-shadow: 0 1px 3px rgba(255, 252, 248, 0.8);
-  max-width: 140px;
+  text-align: center;
+  max-width: 176px;
 }
