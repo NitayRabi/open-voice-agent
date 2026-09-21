@@ -5,6 +5,7 @@
 /** Where a model runs: a downloaded GGUF, or an OpenAI-compatible endpoint. */
 export type ModelSource = "local" | "remote";
 export type SpeechStt = "parakeet" | "whisper-turbo";
+export type SpeechTts = "qwen3" | "kokoro";
 
 export interface PairedDevice {
   id: string;
@@ -88,6 +89,8 @@ export interface Settings {
   speech_remote_api_key: string;
   /** Speech recognition: Parakeet (fastest, European languages) or Whisper turbo (auto language, e.g. Hebrew). */
   speech_stt: SpeechStt;
+  /** Speech synthesis: Qwen3-TTS CustomVoice (GPU) or Kokoro 82M (CPU). */
+  speech_tts: SpeechTts;
   mic_device_id: string;
   output_device_id: string;
   /** Noise-gate threshold in dB; -100 means "off". */

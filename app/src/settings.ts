@@ -21,6 +21,7 @@ const FIELDS = {
   speech_remote_model: "value",
   speech_remote_api_key: "value",
   speech_stt: "value",
+  speech_tts: "value",
   voice: "value",
   sample_rate: "int",
   mic_device_id: "value",
@@ -81,6 +82,7 @@ function applyToForm(s: Settings): void {
   updateBrainVisibility();
   updateSpeechVisibility();
   updateDecisionAgentVisibility();
+  updateVoiceChoices();
   $in("speech_model_path").value = s.speech_model?.includes("/") ? s.speech_model : "";
   renderDelegationAgents(s.delegation_agents || []);
 }
@@ -314,6 +316,47 @@ $sel("speech_stt").addEventListener("change", () => {
     instructions.value = `${instructions.value.trimEnd()} ${ENGLISH_REPLY_RULE}`.trimStart();
   }
 });
+// The two engines have disjoint voice names, so only one engine's voices are
+// ever selectable, and switching engines moves to that engine's default rather
+// than leaving a voice selected that the new engine cannot speak.
+const QWEN3_DEFAULT_VOICE = "Aiden";
+const KOKORO_DEFAULT_VOICE = "bm_fable";
+const KOKORO_GROUPS = ["voices_kokoro", "voices_kokoro_b", "voices_kokoro_other"];
+
+/** Kokoro voices are lowercase `xx_name`; Qwen3 speakers are capitalised. */
+function isKokoroVoice(value: string): boolean {
+  return /^[a-z]{2}_/.test(value);
+}
+
+function updateVoiceChoices(): void {
+  const kokoro = $sel("speech_tts").value === "kokoro";
+  const qwen3Group = document.getElementById("voices_qwen3") as HTMLOptGroupElement | null;
+  if (qwen3Group) qwen3Group.hidden = kokoro;
+  for (const id of KOKORO_GROUPS) {
+    const group = document.getElementById(id) as HTMLOptGroupElement | null;
+    if (group) group.hidden = !kokoro;
+  }
+
+  // Classify by name rather than by the options' current state, so this does
+  // not depend on whether the engine or the voice was written to the form first.
+  const voice = $sel("voice");
+  for (const option of Array.from(voice.options)) {
+    option.disabled = isKokoroVoice(option.value) !== kokoro;
+  }
+  if (isKokoroVoice(voice.value) !== kokoro) {
+    voice.value = kokoro ? KOKORO_DEFAULT_VOICE : QWEN3_DEFAULT_VOICE;
+  }
+
+  const hint = document.getElementById("voice_hint");
+  if (hint) {
+    hint.textContent = kokoro
+      ? "Only af_heart and bm_fable are bundled; any other voice downloads on first use, so pick it while online."
+      : "";
+  }
+}
+
+$sel("speech_tts").addEventListener("change", updateVoiceChoices);
+updateVoiceChoices();
 $sel("speech_model").addEventListener("change", () => ($in("speech_model_path").value = ""));
 
 $("generate_web_token").addEventListener("click", () => {
@@ -811,7 +854,7 @@ function renderSetupReview(): void {
     ? `${$in("setup_speech_remote_name").value} at ${$in("setup_speech_remote_url").value}`
     : (speech?.name || selectedSpeechModel());
   const items: [string, string | null | undefined][] = [
-    ["Voice pipeline", `${current.speech_stt === "whisper-turbo" ? "Whisper turbo" : "Parakeet"} → conversational model → speech`],
+    ["Voice pipeline", `${current.speech_stt === "whisper-turbo" ? "Whisper turbo" : "Parakeet"} → conversational model → ${current.speech_tts === "kokoro" ? "Kokoro (CPU)" : "Qwen3-TTS (GPU)"}`],
     ["Conversational model", speechDescription],
     ["Delegation", $sel("setup_brain_source").value === "acpx"
       ? `${resolvedAcpxAgent($sel("setup_acpx_agent"))?.label ?? "Coding agent"} via acpx`

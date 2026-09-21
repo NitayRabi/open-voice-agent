@@ -274,6 +274,18 @@ impl BackendManager {
             return Err(format!("unknown speech recognition model {:?}", cfg.speech_stt));
         }
         cmd.env("HF_S2S_STT", &cfg.speech_stt);
+        if !matches!(cfg.speech_tts.as_str(), "qwen3" | "kokoro") {
+            return Err(format!("unknown speech synthesis model {:?}", cfg.speech_tts));
+        }
+        cmd.env("HF_S2S_TTS", &cfg.speech_tts);
+        // The voice belongs to whichever engine is selected; `voice_for_engine`
+        // keeps a voice left over from the other one from reaching the launcher.
+        let voice = cfg.voice_for_engine();
+        if cfg.speech_tts == "kokoro" {
+            cmd.env("HF_S2S_KOKORO_VOICE", voice);
+        } else {
+            cmd.env("HF_S2S_QWEN3_SPEAKER", voice);
+        }
         for (k, v) in &cfg.launch_env {
             cmd.env(k, v);
         }
