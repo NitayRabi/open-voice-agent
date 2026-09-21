@@ -2,6 +2,38 @@
   "_comment": "Allowed on-demand downloads: passed 8/8 intended delegations. Licenses and conversational routing vary; see app/docs/model-catalog.md. Revisions and SHA-256 hashes pin the files; no weights ship in the installer.",
   "models": [
     {
+      "id": "openjev-decider-0.7b",
+      "name": "OpenJEV Decider 0.7B — Q4_K_M",
+      "repo": "AlexWortega/openjev",
+      "file": "openjev-0.7b.gguf",
+      "revision": "e34312cf47cd0159ee82f0d34b02e72353b7752e",
+      "bytes": 740000000,
+      "sha256": "44324f923c5e032906b3fa1fba6fa20f1cb6e4c79de365fa3f06b9b1d7d07998",
+      "license": "Apache-2.0",
+      "badges": [],
+      "roles": [
+        "decision",
+        "brain"
+      ],
+      "note": "Ultra-fast ~0.7B OpenJEV decision agent for instantaneous semantic routing with minimal VRAM footprint."
+    },
+    {
+      "id": "decider-2b",
+      "name": "Decider 2B — Q4_K_M",
+      "repo": "cosetoenor/decider-2b-GGUF",
+      "file": "decider-2b.Q4_K_M.gguf",
+      "revision": "e34312cf47cd0159ee82f0d34b02e72353b7752e",
+      "bytes": 1600000000,
+      "sha256": "5c42173eefb598d975a254ecdeec83d5a15aefc60956554efab0521e15fa4d52",
+      "license": "Apache-2.0",
+      "badges": [],
+      "roles": [
+        "decision",
+        "brain"
+      ],
+      "note": "High-capacity 2B Decider model fine-tuned for structured decision making and zero-hallucination agent routing."
+    },
+    {
       "id": "gemma-4-e4b-it-q4-0",
       "name": "Gemma 4 E4B Instruct — Q4_0",
       "repo": "ggml-org/gemma-4-E4B-it-GGUF",

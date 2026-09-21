@@ -175,6 +175,15 @@ fn d_local() -> String {
 fn d_speech_stt() -> String {
     "parakeet".into()
 }
+fn d_decision_agent_model() -> String {
+    "openjev-decider-0.7b".into()
+}
+fn d_decision_agent_port() -> u16 {
+    8130
+}
+fn d_decision_agent_base_url() -> String {
+    "https://api.typesafe.ai/v1".into()
+}
 fn d_web_bind() -> String {
     "127.0.0.1".into()
 }
@@ -230,7 +239,7 @@ pub struct Settings {
     #[serde(default)]
     pub app_autostart: bool,
 
-    // ── delegation to the "brain" ───────────────────────────────────────
+    // ── delegation to the "brain" ─────────────────────────────────────────
     #[serde(default = "d_true")]
     pub delegation_enabled: bool,
     /// "remote" = call an OpenAI-compatible endpoint; "local" = the app runs a
@@ -300,7 +309,17 @@ pub struct Settings {
     #[serde(default = "d_true")]
     pub delegation_speak_result: bool,
 
-    // ── engine / backend supervisor ─────────────────────────────────────
+    /// Configurable decision agent model: "openjev-decider-0.7b" or "decider-2b".
+    #[serde(default = "d_decision_agent_model")]
+    pub decision_agent_model: String,
+    #[serde(default = "d_decision_agent_port")]
+    pub decision_agent_port: u16,
+    #[serde(default)]
+    pub decision_agent_api_key: String,
+    #[serde(default = "d_decision_agent_base_url")]
+    pub decision_agent_base_url: String,
+
+    // ── engine / backend supervisor ──────────────────────────────────────
     /// Let the app start/stop the speech backend process.
     #[serde(default)]
     pub manage_backend: bool,
@@ -457,6 +476,18 @@ impl Settings {
             && self.brain_local_ngl == o.brain_local_ngl
     }
 
+    pub fn is_local_decider(&self) -> bool {
+        self.decision_agent_model != "typesafe-jev-api"
+    }
+
+    /// True when nothing that affects the decider server has changed.
+    pub fn decider_local_eq(&self, o: &Settings) -> bool {
+        self.decision_agent_model == o.decision_agent_model
+            && self.decision_agent_port == o.decision_agent_port
+            && self.llama_server_bin == o.llama_server_bin
+            && self.is_local_decider() == o.is_local_decider()
+    }
+
     /// True when nothing that affects the managed backend process has changed.
     pub fn backend_config_eq(&self, o: &Settings) -> bool {
         self.manage_backend == o.manage_backend
@@ -488,7 +519,7 @@ impl Settings {
     }
 
     pub fn save(&self, app: &AppHandle) -> Result<()> {
-        let path = Self::config_path(app)?;
+        let path = Self::config_path(app)? ;
         let json = serde_json::to_string_pretty(self).context("serialise settings")?;
         fs::write(&path, json).with_context(|| format!("write {path:?}"))
     }

@@ -124,6 +124,12 @@ export interface Settings {
   delegation_timeout_s: number;
   delegation_speak_result: boolean;
 
+  /** Configurable decision agent model: "openjev-decider-0.7b" or "decider-2b". */
+  decision_agent_model: string;
+  decision_agent_port: number;
+  decision_agent_api_key?: string;
+  decision_agent_base_url?: string;
+
   // ── engine / backend supervisor ─────────────────────────────────
   manage_backend: boolean;
   launch_command: string[];

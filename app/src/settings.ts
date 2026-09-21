@@ -52,6 +52,10 @@ const FIELDS = {
   delegation_tool_description: "value",
   delegation_timeout_s: "int",
   delegation_speak_result: "checked",
+  decision_agent_model: "value",
+  decision_agent_port: "int",
+  decision_agent_api_key: "value",
+  decision_agent_base_url: "value",
   web_enabled: "checked",
   web_bind: "value",
   web_port: "int",
@@ -76,6 +80,7 @@ function applyToForm(s: Settings): void {
   updateGateLabel();
   updateBrainVisibility();
   updateSpeechVisibility();
+  updateDecisionAgentVisibility();
   $in("speech_model_path").value = s.speech_model?.includes("/") ? s.speech_model : "";
   renderDelegationAgents(s.delegation_agents || []);
 }
@@ -277,6 +282,11 @@ function updateSpeechVisibility(): void {
     el.classList.toggle("show", el.dataset.speechSource === src);
   });
 }
+function updateDecisionAgentVisibility(): void {
+  const isCloud = $sel("decision_agent_model").value === "typesafe-jev-api";
+  const wrap = $("decision_agent_api_key_wrap");
+  if (wrap) wrap.style.display = isCloud ? "" : "none";
+}
 
 // ── tabs ────────────────────────────────────────────────────────────────
 document.querySelectorAll<HTMLButtonElement>("nav.tabs button").forEach((b) => {
@@ -294,6 +304,7 @@ $sel("brain_source").addEventListener("change", () => {
   if ($sel("brain_source").value === "acpx") void renderAcpx();
 });
 $sel("speech_model_source").addEventListener("change", updateSpeechVisibility);
+$sel("decision_agent_model").addEventListener("change", updateDecisionAgentVisibility);
 // Qwen3-TTS cannot speak Hebrew, so ask for English replies when switching to
 // the multilingual recognizer. The rule stays visible and editable in the prompt.
 const ENGLISH_REPLY_RULE = "Always reply in English, even when the user speaks another language.";
