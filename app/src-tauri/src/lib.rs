@@ -8,6 +8,7 @@ mod hotkey;
 mod localbrain;
 mod openjev;
 mod runtime;
+mod realtime;
 mod webserver;
 
 use parking_lot::Mutex;
@@ -34,6 +35,7 @@ pub struct AppState {
     brain_server: LocalBrain,
     devices: device_access::DeviceRegistry,
     acpx: Acpx,
+    realtime: realtime::RealtimeBridge,
 }
 
 #[tauri::command]
@@ -62,7 +64,7 @@ fn save_settings(
     state: State<'_, AppState>,
     mut settings: Settings,
 ) -> Result<(), String> {
-    settings.server_url = config::local_server_url();
+    settings.server_url = config::local_server_url_for(&settings);
     settings.validate_delegation_agents().map_err(|e| e.to_string())?;
     if settings.web_enabled
         && settings.web_bind.trim() != "127.0.0.1"
@@ -222,6 +224,26 @@ fn backend_touch(app: AppHandle, state: State<'_, AppState>) {
 }
 
 #[tauri::command]
+fn realtime_connect(app: AppHandle, state: State<'_, AppState>, url: String) -> Result<u64, String> {
+    state.realtime.connect(&app, &url)
+}
+
+#[tauri::command]
+fn realtime_start(state: State<'_, AppState>, id: u64) -> Result<(), String> {
+    state.realtime.start(id)
+}
+
+#[tauri::command]
+fn realtime_send(state: State<'_, AppState>, id: u64, message: String) -> Result<(), String> {
+    state.realtime.send(id, message)
+}
+
+#[tauri::command]
+fn realtime_disconnect(state: State<'_, AppState>, id: u64) {
+    state.realtime.disconnect(Some(id));
+}
+
+#[tauri::command]
 fn web_start(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     state.web.start(&app)
 }
@@ -279,11 +301,17 @@ fn app_version(app: AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
+fn stop_managed_services(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    state.realtime.disconnect(None);
+    state.web.stop(app);
+    state.brain_server.stop(app);
+    state.backend.stop(app);
+}
+
 #[tauri::command]
-fn quit_app(app: AppHandle, state: State<'_, AppState>) {
-    state.web.stop(&app);
-    state.brain_server.stop(&app);
-    state.backend.stop(&app);
+fn quit_app(app: AppHandle) {
+    stop_managed_services(&app);
     app.exit(0);
 }
 
@@ -291,9 +319,18 @@ fn quit_app(app: AppHandle, state: State<'_, AppState>) {
 
 fn open_settings(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("settings") {
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
+        if let Err(error) = w.show() {
+            eprintln!("[settings] show failed: {error}");
+        }
+        if let Err(error) = w.unminimize() {
+            eprintln!("[settings] unminimize failed: {error}");
+        }
+        let _ = w.center();
+        if let Err(error) = w.set_focus() {
+            eprintln!("[settings] focus failed: {error}");
+        }
+    } else {
+        eprintln!("[settings] settings window is missing");
     }
 }
 
@@ -395,6 +432,10 @@ pub fn run() {
             backend_running,
             backend_ready,
             backend_touch,
+            realtime_connect,
+            realtime_start,
+            realtime_send,
+            realtime_disconnect,
             web_start,
             web_stop,
             web_url,
@@ -429,6 +470,7 @@ pub fn run() {
                 brain_server: LocalBrain::default(),
                 devices,
                 acpx: Acpx::default(),
+                realtime: realtime::RealtimeBridge::default(),
             });
 
             if let Err(e) = hotkey::apply(&handle, &hk) {
@@ -469,10 +511,18 @@ pub fn run() {
                 if let Ok(Some(monitor)) = win.primary_monitor() {
                     let size = monitor.size();
                     let scale = monitor.scale_factor();
-                    let bubble = 148.0 * scale;
+                    let bubble_size = win.outer_size().ok();
+                    let bubble_width = bubble_size
+                        .as_ref()
+                        .map(|size| size.width as f64)
+                        .unwrap_or(192.0 * scale);
+                    let bubble_height = bubble_size
+                        .as_ref()
+                        .map(|size| size.height as f64)
+                        .unwrap_or(192.0 * scale);
                     let margin = 32.0 * scale;
-                    let x = (size.width as f64 - bubble - margin).max(0.0);
-                    let y = (size.height as f64 - bubble - margin * 3.0).max(0.0);
+                    let x = (size.width as f64 - bubble_width - margin).max(0.0);
+                    let y = (size.height as f64 - bubble_height - margin * 3.0).max(0.0);
                     let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
                 }
             }
@@ -487,14 +537,20 @@ pub fn run() {
                     }
                     "bubble" => {
                         let app = window.app_handle();
-                        app.state::<AppState>().web.stop(app);
-                        app.state::<AppState>().brain_server.stop(app);
-                        app.state::<AppState>().backend.stop(app);
+                        stop_managed_services(app);
                     }
                     _ => {}
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Open Voice Agent");
+        .build(tauri::generate_context!())
+        .expect("error while building Open Voice Agent")
+        .run(|app, event| {
+            if matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) {
+                stop_managed_services(app);
+            }
+        });
 }
