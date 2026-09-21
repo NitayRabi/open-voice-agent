@@ -78,6 +78,43 @@ pub fn local_server_url() -> String {
     format!("ws://127.0.0.1:{BACKEND_PORT}/v1/realtime")
 }
 
+pub fn local_server_url_for(settings: &Settings) -> String {
+    let port = settings
+        .launch_env
+        .get("HF_S2S_BACKEND_PORT")
+        .and_then(|value| value.trim().parse::<u16>().ok())
+        .unwrap_or(BACKEND_PORT);
+    format!("ws://127.0.0.1:{port}/v1/realtime")
+}
+
+#[cfg(test)]
+mod local_server_url_tests {
+    use super::*;
+
+    #[test]
+    fn follows_the_managed_backend_port_override() {
+        let mut settings = Settings::default();
+        settings
+            .launch_env
+            .insert("HF_S2S_BACKEND_PORT".into(), "61629".into());
+
+        assert_eq!(
+            local_server_url_for(&settings),
+            "ws://127.0.0.1:61629/v1/realtime"
+        );
+    }
+
+    #[test]
+    fn ignores_an_invalid_managed_backend_port_override() {
+        let mut settings = Settings::default();
+        settings
+            .launch_env
+            .insert("HF_S2S_BACKEND_PORT".into(), "invalid".into());
+
+        assert_eq!(local_server_url_for(&settings), local_server_url());
+    }
+}
+
 fn d_server_url() -> String {
     local_server_url()
 }
@@ -458,8 +495,11 @@ impl Settings {
                     eprintln!("[config] {path:?} is invalid ({e}); using defaults");
                     Settings::default()
                 });
-                // The speech stack is an implementation detail, not a user choice.
-                settings.server_url = d_server_url();
+                // The speech stack is an implementation detail, not a user
+                // choice, but managed side-by-side/dev installs may assign it
+                // a different loopback port. The client and launcher must use
+                // the same value.
+                settings.server_url = local_server_url_for(&settings);
                 settings
             }
             Err(_) => Settings::default(),

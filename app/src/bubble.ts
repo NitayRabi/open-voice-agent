@@ -41,7 +41,9 @@ async function loadSettings(): Promise<Settings> {
 }
 
 function setCaption(state: PipelineState): void {
-  caption.textContent = CAPTIONS[state] ?? state;
+  caption.textContent = state === "error" && pipeline.lastError
+    ? `error: ${pipeline.lastError}`
+    : CAPTIONS[state] ?? state;
 }
 
 pipeline.addEventListener("state", (e) => {
@@ -60,6 +62,7 @@ pipeline.addEventListener("input-level", (e) => {
 });
 pipeline.addEventListener("log", (e) => {
   console.log("[pipeline]", e.detail.msg);
+  emit("backend-log", `[pipeline] ${e.detail.msg}`).catch(() => {});
 });
 pipeline.addEventListener("transcript", (e) => {
   console.log("[transcript]", e.detail.role, e.detail.text);
@@ -99,6 +102,11 @@ orb.addEventListener("pointerup", async (ev) => {
   if (!d || d.dragging) return;
   if (Date.now() - d.t < 500) {
     try {
+      // WebKit can leave media permission requests pending when an
+      // always-on-top transparent window was originally created unfocused.
+      // Focus only for the user-initiated tap, immediately before requesting
+      // microphone access.
+      await currentWindow()?.setFocus?.();
       await pipeline.toggle();
     } catch (err) {
       console.error(err);
@@ -119,6 +127,7 @@ orb.addEventListener("contextmenu", (ev) => {
 
 void listen("speech-toggle", async () => {
   try {
+    await currentWindow()?.setFocus?.();
     await pipeline.toggle();
   } catch (err) {
     console.error(err);

@@ -6,6 +6,7 @@
 // drives the turns; we only stream PCM16 up and play PCM16 down.
 
 import { errorText } from "./errors.js";
+import { openRealtimeSocket, type RealtimeSocket } from "./tauri.js";
 import type {
   AudioInputDevice,
   LevelDetail,
@@ -82,7 +83,7 @@ export class VoicePipeline extends EventTarget {
   settings: Settings | null = null;
   state: PipelineState = "idle";
 
-  private _ws: WebSocket | null = null;
+  private _ws: RealtimeSocket | null = null;
   private _ctx: AudioContext | null = null;
   private _stream: MediaStream | null = null;
   private _capture: AudioWorkletNode | null = null;
@@ -98,6 +99,7 @@ export class VoicePipeline extends EventTarget {
   private _queuedAgentReports: string[] = [];
   private _nextTaskId = 1;
   private _backendHeartbeat: ReturnType<typeof setInterval> | null = null;
+  lastError = "";
 
   constructor(opts: PipelineOptions = {}) {
     super();
@@ -176,6 +178,7 @@ export class VoicePipeline extends EventTarget {
     if (!this.settings) throw new Error("pipeline not configured");
     this._closing = false;
     this._reconnects = 0;
+    this.lastError = "";
     this._setState("connecting");
     try {
       await this.opts.ensureBackend?.(this._cfg);
@@ -183,9 +186,10 @@ export class VoicePipeline extends EventTarget {
       await this._setupAudio();
       await this._connectRealtime();
     } catch (e) {
-      this._log(`start failed: ${errorText(e)}`);
-      this._setState("error");
+      this.lastError = errorText(e);
+      this._log(`start failed: ${this.lastError}`);
       this.stop();
+      this._setState("error");
       throw e;
     }
   }
@@ -238,7 +242,13 @@ export class VoicePipeline extends EventTarget {
       autoGainControl: true,
     };
     if (cfg.mic_device_id) audio.deviceId = { exact: cfg.mic_device_id };
-    this._stream = await navigator.mediaDevices.getUserMedia({ audio });
+    this._log("requesting microphone access");
+    try {
+      this._stream = await navigator.mediaDevices.getUserMedia({ audio });
+    } catch (error) {
+      throw new Error(`microphone access failed: ${errorText(error)}`);
+    }
+    this._log("microphone access granted");
 
     const ctx = new AudioContext({ latencyHint: "interactive" });
     this._ctx = ctx;
@@ -249,8 +259,13 @@ export class VoicePipeline extends EventTarget {
     micSrc.connect(micAnalyser);
     this._micAnalyser = micAnalyser;
 
-    await ctx.audioWorklet.addModule(new URL("mic-capture.js", base));
-    await ctx.audioWorklet.addModule(new URL("audio-playback.js", base));
+    try {
+      await ctx.audioWorklet.addModule(new URL("mic-capture.js", base));
+      await ctx.audioWorklet.addModule(new URL("audio-playback.js", base));
+    } catch (error) {
+      throw new Error(`audio engine setup failed: ${errorText(error)}`);
+    }
+    this._log("audio engine ready");
 
     const capture = new AudioWorkletNode(ctx, "mic-capture", {
       numberOfInputs: 1,
@@ -317,7 +332,7 @@ export class VoicePipeline extends EventTarget {
 
   private _onMicChunk(arrayBuffer: ArrayBuffer): void {
     if (this._muted) return;
-    if (this._ws?.readyState === WebSocket.OPEN) {
+    if (this._ws?.readyState === 1) {
       this._ws.send(
         JSON.stringify({ type: "input_audio_buffer.append", audio: b64FromBuf(arrayBuffer) }),
       );
@@ -395,7 +410,7 @@ export class VoicePipeline extends EventTarget {
   private async _connectRealtime(): Promise<void> {
     const url = this._cfg.server_url;
     this._log(`connecting to ${url}`);
-    const ws = new WebSocket(url, [
+    const ws = await openRealtimeSocket(url, [
       "realtime",
       "openai-insecure-api-key.open-voice-agent",
       "openai-beta.realtime-v1",
@@ -408,15 +423,17 @@ export class VoicePipeline extends EventTarget {
       this._setState("listening");
       this._log("connected");
     };
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       if (this._closing) return;
-      this._log("connection closed");
+      const detail = [event.code, event.reason].filter(Boolean).join(" ");
+      this.lastError = `voice connection closed${detail ? ` (${detail})` : ""}`;
+      this._log(this.lastError);
       this._maybeReconnect();
     };
     ws.onerror = () => {
       if (!this._closing) this._log("websocket error");
     };
-    ws.onmessage = (ev: MessageEvent<string>) => {
+    ws.onmessage = (ev) => {
       let msg: ServerEvent;
       try {
         msg = JSON.parse(ev.data) as ServerEvent;
@@ -429,6 +446,7 @@ export class VoicePipeline extends EventTarget {
 
   private _maybeReconnect(): void {
     if (this._closing || this._reconnects >= 5) {
+      if (!this.lastError) this.lastError = "voice connection unavailable";
       this._setState("error");
       return;
     }
@@ -504,7 +522,7 @@ export class VoicePipeline extends EventTarget {
   }
 
   private _sendWs(obj: unknown): void {
-    if (this._ws?.readyState === WebSocket.OPEN) this._ws.send(JSON.stringify(obj));
+    if (this._ws?.readyState === 1) this._ws.send(JSON.stringify(obj));
   }
 
   private async _handleFunctionCall(msg: ServerEvent): Promise<void> {

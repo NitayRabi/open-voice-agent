@@ -2,13 +2,16 @@ package ai.openvoice.client
 
 import android.app.*
 import android.content.*
+import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
 import android.view.*
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import kotlin.math.abs
@@ -27,6 +30,8 @@ class VoiceService : Service() {
 
     private var orb: OrbView? = null
     private var overlay: View? = null
+    private var dismissOverlay: View? = null
+    private var dismissTextView: TextView? = null
     private var agentButton: Button? = null
     private var agents: List<NodeAgent> = emptyList()
     private var selectedAgentId: String? = null
@@ -80,6 +85,85 @@ class VoiceService : Service() {
         if (newState == "idle") session = null
     }
 
+    private fun dp(n: Int) = (n * resources.displayMetrics.density).toInt()
+
+    private fun getScreenHeight(wm: WindowManager): Int {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            wm.currentWindowMetrics.bounds.height()
+        } else {
+            resources.displayMetrics.heightPixels
+        }
+    }
+
+    private fun createDismissBackground(active: Boolean): GradientDrawable {
+        return GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(20).toFloat()
+            if (active) {
+                setColor(Color.argb(235, 220, 50, 50))
+                setStroke(dp(1).coerceAtLeast(1), Color.argb(200, 255, 120, 120))
+            } else {
+                setColor(Color.argb(210, 30, 34, 45))
+                setStroke(dp(1), Color.argb(100, 120, 140, 180))
+            }
+        }
+    }
+
+    private fun showDismissTarget(wm: WindowManager) {
+        if (dismissOverlay != null || !Settings.canDrawOverlays(this)) return
+        val pill = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            background = createDismissBackground(false)
+
+            val icon = TextView(this@VoiceService).apply {
+                text = "✕"
+                setTextColor(Color.WHITE)
+                textSize = 14f
+                setPadding(0, 0, dp(6), 0)
+            }
+            val text = TextView(this@VoiceService).apply {
+                this@VoiceService.dismissTextView = this
+                this.text = "Drag here to dismiss"
+                setTextColor(Color.WHITE)
+                textSize = 13f
+            }
+            addView(icon)
+            addView(text)
+        }
+
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = dp(36)
+        }
+
+        dismissOverlay = pill
+        wm.addView(pill, params)
+    }
+
+    private fun updateDismissTarget(inZone: Boolean) {
+        dismissOverlay?.let { view ->
+            view.background = createDismissBackground(inZone)
+            view.animate().scaleX(if (inZone) 1.1f else 1.0f).scaleY(if (inZone) 1.1f else 1.0f).setDuration(120).start()
+        }
+        dismissTextView?.text = if (inZone) "Release to dismiss" else "Drag here to dismiss"
+    }
+
+    private fun hideDismissTarget(wm: WindowManager) {
+        dismissOverlay?.let {
+            runCatching { wm.removeView(it) }
+        }
+        dismissOverlay = null
+        dismissTextView = null
+    }
+
     private fun showOverlay() {
         if (orb != null || !Settings.canDrawOverlays(this)) return
         val wm = getSystemService(WINDOW_SERVICE) as WindowManager
@@ -92,11 +176,67 @@ class VoiceService : Service() {
         orb = OrbView(this).also { view ->
             view.state = state
             var downX = 0f; var downY = 0f; var startX = 0; var startY = 0
+            var isDragging = false
+            var isOverDismiss = false
+
             view.setOnTouchListener { _, e ->
                 when (e.action) {
-                    MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; startX = params.x; startY = params.y; true }
-                    MotionEvent.ACTION_MOVE -> { params.x = startX + (e.rawX - downX).toInt(); params.y = startY + (e.rawY - downY).toInt(); wm.updateViewLayout(root, params); true }
-                    MotionEvent.ACTION_UP -> { if (abs(e.rawX - downX) < 12 && abs(e.rawY - downY) < 12) toggle(); true }
+                    MotionEvent.ACTION_DOWN -> {
+                        downX = e.rawX
+                        downY = e.rawY
+                        startX = params.x
+                        startY = params.y
+                        isDragging = false
+                        isOverDismiss = false
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = e.rawX - downX
+                        val dy = e.rawY - downY
+                        if (!isDragging && (abs(dx) > 12 || abs(dy) > 12)) {
+                            isDragging = true
+                            showDismissTarget(wm)
+                        }
+                        if (isDragging) {
+                            params.x = startX + dx.toInt()
+                            params.y = startY + dy.toInt()
+                            wm.updateViewLayout(root, params)
+
+                            val screenHeight = getScreenHeight(wm)
+                            val dismissThreshold = dp(120)
+                            val inZone = e.rawY >= screenHeight - dismissThreshold || (params.y + height) >= screenHeight - dp(60)
+
+                            if (inZone != isOverDismiss) {
+                                isOverDismiss = inZone
+                                updateDismissTarget(inZone)
+                                root.alpha = if (inZone) 0.6f else 1.0f
+                            }
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        val dx = abs(e.rawX - downX)
+                        val dy = abs(e.rawY - downY)
+                        hideDismissTarget(wm)
+                        root.alpha = 1.0f
+
+                        if (isDragging && isOverDismiss) {
+                            session?.stop()
+                            stopSelf()
+                        } else if (dx < 12 && dy < 12) {
+                            toggle()
+                        }
+                        isDragging = false
+                        isOverDismiss = false
+                        true
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        hideDismissTarget(wm)
+                        root.alpha = 1.0f
+                        isDragging = false
+                        isOverDismiss = false
+                        true
+                    }
                     else -> false
                 }
             }
@@ -153,7 +293,14 @@ class VoiceService : Service() {
     }
 
     override fun onDestroy() {
-        session?.stop(); overlay?.let { runCatching { (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(it) } }; overlay = null; orb = null
+        session?.stop()
+        val wm = getSystemService(WINDOW_SERVICE) as? WindowManager
+        overlay?.let { runCatching { wm?.removeView(it) } }
+        dismissOverlay?.let { runCatching { wm?.removeView(it) } }
+        overlay = null
+        orb = null
+        dismissOverlay = null
+        dismissTextView = null
         super.onDestroy()
     }
 }

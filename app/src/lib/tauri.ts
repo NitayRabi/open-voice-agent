@@ -26,6 +26,7 @@ interface TauriGlobal {
 /** Only the slice of the window API the bubble uses. */
 export interface TauriWindow {
   startDragging?(): Promise<void>;
+  setFocus?(): Promise<void>;
 }
 
 export interface TauriEvent<T> {
@@ -75,6 +76,10 @@ export interface Commands {
   backend_stop: { args: void; result: void };
   backend_ready: { args: void; result: boolean };
   backend_touch: { args: void; result: void };
+  realtime_connect: { args: { url: string }; result: number };
+  realtime_start: { args: { id: number }; result: void };
+  realtime_send: { args: { id: number; message: string }; result: void };
+  realtime_disconnect: { args: { id: number }; result: void };
   web_start: { args: void; result: string };
   web_stop: { args: void; result: void };
   web_url: { args: void; result: string | null };
@@ -156,6 +161,8 @@ export interface AppEvents {
   "ova-transcript": TranscriptDetail;
   "settings-changed": null;
   "speech-toggle": null;
+  "realtime-message": { id: number; message: string };
+  "realtime-close": { id: number; error?: string };
 }
 
 export type AppEventName = keyof AppEvents;
@@ -208,6 +215,68 @@ export async function emit<K extends AppEventName>(event: K, payload?: AppEvents
 
 export function currentWindow(): TauriWindow | null {
   return T?.window?.getCurrentWindow?.() ?? null;
+}
+
+export interface RealtimeSocket {
+  readonly readyState: number;
+  onopen: (() => void) | null;
+  onmessage: ((event: { data: string }) => void) | null;
+  onclose: ((event: { code: number; reason: string }) => void) | null;
+  onerror: (() => void) | null;
+  send(message: string): void;
+  close(): void;
+}
+
+class NativeRealtimeSocket implements RealtimeSocket {
+  readyState = 0;
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onclose: ((event: { code: number; reason: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  private id = 0;
+  private unlisten: UnlistenFn[] = [];
+
+  async connect(url: string): Promise<void> {
+    this.id = await invoke("realtime_connect", { url });
+    this.unlisten.push(
+      await listen("realtime-message", (event) => {
+        if (event.payload.id === this.id) this.onmessage?.({ data: event.payload.message });
+      }),
+      await listen("realtime-close", (event) => {
+        if (event.payload.id !== this.id || this.readyState === 3) return;
+        this.readyState = 3;
+        if (event.payload.error) this.onerror?.();
+        this.onclose?.({ code: event.payload.error ? 1006 : 1000, reason: event.payload.error ?? "" });
+        this.cleanup();
+      }),
+    );
+    await invoke("realtime_start", { id: this.id });
+    this.readyState = 1;
+    setTimeout(() => this.onopen?.(), 0);
+  }
+
+  send(message: string): void {
+    if (this.readyState !== 1) return;
+    void invoke("realtime_send", { id: this.id, message }).catch(() => this.onerror?.());
+  }
+
+  close(): void {
+    if (this.readyState === 3) return;
+    this.readyState = 3;
+    void invoke("realtime_disconnect", { id: this.id });
+    this.cleanup();
+  }
+
+  private cleanup(): void {
+    for (const unlisten of this.unlisten.splice(0)) unlisten();
+  }
+}
+
+export async function openRealtimeSocket(url: string, protocols: string[]): Promise<RealtimeSocket> {
+  if (!T) return new WebSocket(url, protocols) as RealtimeSocket;
+  const socket = new NativeRealtimeSocket();
+  await socket.connect(url);
+  return socket;
 }
 
 export async function getSettings(): Promise<Settings> {

@@ -9,6 +9,7 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "withGlobalTauri": true,
     "security": {
       "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws: wss: http: https:; media-src 'self' blob: mediastream:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'"
@@ -18,10 +19,10 @@
         "label": "bubble",
         "url": "bubble.html",
         "title": "Open Voice Agent",
-        "width": 148,
-        "height": 148,
-        "minWidth": 148,
-        "minHeight": 148,
+        "width": 192,
+        "height": 192,
+        "minWidth": 192,
+        "minHeight": 192,
         "resizable": false,
         "maximizable": false,
         "minimizable": false,
@@ -58,6 +59,9 @@
       "icons/icon.ico"
     ],
     "category": "Productivity",
+    "macOS": {
+      "entitlements": "entitlements.plist"
+    },
     "shortDescription": "Floating voice agent with async delegation",
     "longDescription": "A floating voice-agent bubble on the Hugging Face speech-to-speech stack (VAD -> STT -> LLM -> TTS over the OpenAI Realtime event set), with a global push-to-toggle hotkey, a settings screen, and asynchronous delegation to a more capable model behind an OpenAI-compatible endpoint."
   },
