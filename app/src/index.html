@@ -143,6 +143,14 @@
           <small>Replies are still spoken in a supported voice language; Hebrew speech is answered in English.</small>
         </label>
         <label>
+          <span>Speech synthesis</span>
+          <select id="speech_tts">
+            <option value="qwen3">Qwen3-TTS CustomVoice — richer voices, runs on the GPU</option>
+            <option value="kokoro">Kokoro 82M — runs on the CPU, leaves the GPU to the model (Recommended)</option>
+          </select>
+          <small>Kokoro keeps the GPU free for the conversational model and speech recognition, and on this machine synthesises several times faster than real time.</small>
+        </label>
+        <label>
           <span>Run conversational model</span>
           <select id="speech_model_source">
             <option value="local">Locally on this machine (Recommended)</option>
@@ -168,10 +176,34 @@
         <label>
           <span>Voice</span>
           <select id="voice">
-            <option>Aiden</option><option>Ryan</option><option>Dylan</option><option>Eric</option>
-            <option>Ono_Anna</option><option>Serena</option><option>Sohee</option>
-            <option>Uncle_Fu</option><option>Vivian</option>
+            <optgroup id="voices_qwen3" label="Qwen3-TTS">
+              <option>Aiden</option><option>Ryan</option><option>Dylan</option><option>Eric</option>
+              <option>Ono_Anna</option><option>Serena</option><option>Sohee</option>
+              <option>Uncle_Fu</option><option>Vivian</option>
+            </optgroup>
+            <optgroup id="voices_kokoro" label="Kokoro — American English">
+              <option>af_heart</option><option>af_alloy</option><option>af_aoede</option>
+              <option>af_bella</option><option>af_jessica</option><option>af_kore</option>
+              <option>af_nicole</option><option>af_nova</option><option>af_river</option>
+              <option>af_sarah</option><option>af_sky</option>
+              <option>am_adam</option><option>am_echo</option><option>am_eric</option>
+              <option>am_fenrir</option><option>am_liam</option><option>am_michael</option>
+              <option>am_onyx</option><option>am_puck</option><option>am_santa</option>
+            </optgroup>
+            <optgroup id="voices_kokoro_b" label="Kokoro — British English">
+              <option>bm_fable</option><option>bm_daniel</option><option>bm_george</option>
+              <option>bm_lewis</option><option>bf_alice</option><option>bf_emma</option>
+              <option>bf_isabella</option><option>bf_lily</option>
+            </optgroup>
+            <optgroup id="voices_kokoro_other" label="Kokoro — other languages">
+              <option>ef_dora</option><option>em_alex</option><option>em_santa</option>
+              <option>ff_siwis</option>
+              <option>hf_alpha</option><option>hf_beta</option><option>hm_omega</option><option>hm_psi</option>
+              <option>if_sara</option><option>im_nicola</option>
+              <option>pf_dora</option><option>pm_alex</option><option>pm_santa</option>
+            </optgroup>
           </select>
+          <small id="voice_hint" class="muted"></small>
         </label>
         <label>
           <span>Pipeline sample rate</span>
@@ -279,97 +311,108 @@
 
         <div data-brain="local">
           <label>
-            <span>Local model</span>
+            <span>Downloaded model</span>
             <select id="brain_local_model"></select>
-            <small>Downloaded models from the <b>Models</b> tab, or paste an absolute <code>.gguf</code> path.</small>
+            <small>Choose a downloaded GGUF, or an absolute path below.</small>
           </label>
-          <label>
-            <span>llama-server binary (optional)</span>
-            <input id="llama_server_bin" type="text" spellcheck="false" placeholder="auto — installed automatically" />
-            <small>Downloaded and managed automatically the first time it's needed. Leave blank unless you want to point at your own build.</small>
-          </label>
-          <div class="field-row">
-            <label class="field"><span>Port</span><input id="brain_local_port" type="number" min="1" max="65535" /></label>
-            <label class="field"><span>Context</span><input id="brain_local_ctx" type="number" min="512" step="512" /></label>
-            <label class="field"><span>GPU layers</span><input id="brain_local_ngl" type="number" min="0" /></label>
-          </div>
+          <details class="add-model">
+            <summary>Advanced: use an existing model file</summary>
+            <label>
+              <span>Absolute GGUF path</span>
+              <input id="brain_local_model_path" type="text" spellcheck="false" placeholder="/absolute/path/to/model.gguf" />
+            </label>
+            <label>
+              <span>llama-server binary</span>
+              <input id="llama_server_bin" type="text" spellcheck="false" placeholder="auto — managed automatically" />
+            </label>
+            <label>
+              <span>Port</span>
+              <input id="brain_local_port" type="number" min="1024" max="65535" value="8127" />
+            </label>
+            <label>
+              <span>Context size (tokens)</span>
+              <input id="brain_local_ctx" type="number" min="1024" max="131072" step="1024" value="8127" />
+            </label>
+            <label>
+              <span>GPU layers (ngl)</span>
+              <input id="brain_local_ngl" type="number" min="0" max="999" value="999" />
+              <small>999 = offload all layers to GPU.</small>
+            </label>
+          </details>
         </div>
 
         <div data-brain="acpx">
-          <div class="acpx-card">
-            <div class="acpx-line"><strong>acpx</strong><span id="acpx_state" class="muted">checking…</span></div>
-            <div class="row">
-              <button id="acpx_install" type="button" class="secondary" hidden>Install acpx now</button>
-              <button id="acpx_refresh" type="button" class="secondary">Detect agents</button>
-            </div>
-            <small class="muted">acpx is a headless ACP client. If it isn't on your PATH, the app installs a pinned build (and Node.js, if needed) the first time it's used.</small>
-          </div>
           <label>
             <span>Agent</span>
             <select id="acpx_agent"></select>
-            <small id="acpx_agent_note"></small>
+            <small id="acpx_note">Discovered from CLIs installed on this machine.</small>
           </label>
-          <div class="row" id="acpx_install_agent_row" hidden>
-            <button id="acpx_install_agent" type="button" class="secondary">Install</button>
+          <div id="acpx_custom_fields" hidden>
+            <label>
+              <span>Launch command</span>
+              <input id="acpx_custom_command" type="text" spellcheck="false" placeholder="my-agent acp --some-flag" />
+              <small>Must speak ACP over stdio (JSON-RPC 2.0).</small>
+            </label>
           </div>
-          <label data-acpx-custom>
-            <span>Custom ACP agent command</span>
-            <input id="acpx_custom_command" type="text" spellcheck="false" placeholder="e.g. /path/to/my-acp-server --stdio" />
-            <small>Any executable that speaks ACP over stdio — passed to <code>acpx --agent</code>.</small>
-          </label>
+          <div class="row">
+            <button id="acpx_install_agent" type="button" class="secondary" hidden>Install agent</button>
+            <button id="acpx_refresh" type="button" class="secondary">Detect again</button>
+            <span id="acpx_status" class="muted"></span>
+          </div>
           <label>
-            <span>Tool permissions</span>
+            <span>Permissions</span>
             <select id="acpx_permissions">
-              <option value="read">Read-only — allow reads and searches, deny edits and commands (Recommended)</option>
-              <option value="all">Full access — approve every tool request</option>
-              <option value="none">No tools — deny every tool request</option>
+              <option value="read">Read only (safe) — may read files, ask before editing or running commands</option>
+              <option value="all">Full access — allow edits and commands without interactive confirmation</option>
+              <option value="none">No tools — answer without reading local files</option>
             </select>
-            <small>Nobody is at the keyboard to approve requests mid-task, so anything not allowed here is denied.</small>
           </label>
-          <label>
-            <span>Working directory</span>
-            <input id="acpx_cwd" type="text" spellcheck="false" placeholder="(blank = your home directory)" />
-            <small>Where the agent runs and which files it can see.</small>
-          </label>
-          <label>
-            <span>Model (optional)</span>
-            <input id="acpx_model" type="text" spellcheck="false" placeholder="(blank = the agent's default)" />
-          </label>
-          <label>
-            <span>acpx binary (optional)</span>
-            <input id="acpx_bin" type="text" spellcheck="false" placeholder="auto — detected or installed automatically" />
-          </label>
+          <details class="add-model">
+            <summary>Advanced agent settings</summary>
+            <label>
+              <span>Model override (optional)</span>
+              <input id="acpx_model" type="text" spellcheck="false" placeholder="Leave empty for the agent's default" />
+            </label>
+            <label>
+              <span>Working directory</span>
+              <input id="acpx_cwd" type="text" spellcheck="false" placeholder="Defaults to this app's folder" />
+            </label>
+            <label>
+              <span>acpx binary path</span>
+              <input id="acpx_bin" type="text" spellcheck="false" placeholder="auto — installed automatically if missing" />
+            </label>
+          </details>
         </div>
 
         <label>
-          <span>Brain system prompt</span>
-          <textarea id="brain_system_prompt" rows="4"></textarea>
-        </label>
-        <label data-brain-hide="acpx">
-          <span>Temperature</span>
-          <input id="brain_temperature" type="number" min="0" max="2" step="0.1" />
+          <span>System prompt for the brain</span>
+          <textarea id="brain_system_prompt" rows="3"></textarea>
+          <small>The instructions given to the capable model when handing it a task.</small>
         </label>
         <label>
-          <span>Tool name</span>
-          <input id="delegation_tool_name" type="text" spellcheck="false" />
+          <span>Temperature: <b id="brain_temp_val">0.3</b></span>
+          <input id="brain_temperature" type="range" min="0" max="1.5" step="0.05" value="0.3" />
         </label>
+
+        <details>
+          <summary>Tool definition exposed to the voice model</summary>
+          <label>
+            <span>Tool name</span>
+            <input id="delegation_tool_name" type="text" spellcheck="false" />
+          </label>
+          <label>
+            <span>Tool description</span>
+            <textarea id="delegation_tool_description" rows="2"></textarea>
+          </label>
+        </details>
         <label>
-          <span>Tool description</span>
-          <textarea id="delegation_tool_description" rows="3"></textarea>
-        </label>
-        <label>
-          <span>Timeout (seconds)</span>
-          <input id="delegation_timeout_s" type="number" min="5" max="600" />
-          <small data-brain-only="acpx">Coding agents often take a minute or more for real work — allow for it.</small>
+          <span>Delegation timeout (seconds)</span>
+          <input id="delegation_timeout_s" type="number" min="5" max="600" value="120" />
         </label>
         <label class="check">
           <input id="delegation_speak_result" type="checkbox" />
-          <span>Speak the finished result back through the model (not just an ack)</span>
+          <span>Speak the brain's answer back out loud</span>
         </label>
-        <div class="row">
-          <button id="test_delegate" class="secondary">Test delegation…</button>
-          <span id="test_delegate_out" class="muted"></span>
-        </div>
         </div>
         </details>
       </section>
@@ -377,109 +420,113 @@
       <!-- MODELS -->
       <section id="tab-models" class="tab">
         <p class="muted">
-          Nothing heavy ships in the installer. Download a local model here (stored under
-          the app data dir), or use a remote endpoint instead (Delegation tab). Downloads
-          resume and are verified.
+          Open Voice Agent uses standard GGUF models. Pick a recommended model below
+          to download it from Hugging Face into your models folder, or use any GGUF
+          already on your disk.
         </p>
-        <details class="add-model">
-          <summary>Advanced: Hugging Face authentication</summary>
-          <p class="muted">The built-in models, including Gemma 4 E4B, do not require a token. Add one only if anonymous download limits become a problem.</p>
+        <div id="model_list" class="model-cards"></div>
+
+        <details class="hf-token-box">
+          <summary>Hugging Face token (for gated models)</summary>
           <label>
-            <span>Hugging Face token (optional)</span>
-            <input id="hf_token" type="password" autocomplete="off" spellcheck="false" />
+            <span>User access token</span>
+            <input id="hf_token" type="password" autocomplete="off" placeholder="hf_..." />
+            <small>Stored securely in this app's settings file. Only needed for gated weights.</small>
           </label>
         </details>
-
-        <p class="muted">These models passed all 8 delegation requests in our smoke test and show their respective licenses below. Recommended is our default; Smallest means the smallest download here. Existing GGUF paths remain available under Advanced.</p>
-        <div id="model_list" class="model-list"></div>
       </section>
 
       <!-- WEB -->
       <section id="tab-web" class="tab">
         <p class="muted">
-          Serve this config screen and the voice UI over HTTP so a browser — on this
-          machine or another device — can use it. The voice UI is at <code>/</code>,
-          this form at <code>/settings</code>.
+          Use Open Voice Agent from your phone, tablet, or another browser on the same network.
         </p>
+
         <label class="check">
           <input id="web_enabled" type="checkbox" />
-          <span>Enable the web server</span>
+          <span>Enable embedded web server</span>
         </label>
-        <div class="field-row">
-          <label class="field">
-            <span>Bind address</span>
-            <select id="web_bind">
-              <option value="127.0.0.1">127.0.0.1 (this machine only)</option>
-              <option value="0.0.0.0">0.0.0.0 (the LAN)</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Port</span>
-            <input id="web_port" type="number" min="1" max="65535" />
-          </label>
-        </div>
-        <label>
-          <span>Browser pairing code</span>
-          <div class="row">
-            <input id="web_token" type="text" autocomplete="off" spellcheck="false"
-              placeholder="(blank = no authentication)" />
-            <button id="generate_web_token" type="button" class="secondary">Generate</button>
+
+        <div id="web_fields">
+          <div class="grid-2">
+            <label>
+              <span>Bind address</span>
+              <input id="web_bind" type="text" spellcheck="false" placeholder="127.0.0.1" />
+              <small>Use <code>0.0.0.0</code> to allow other devices on your local network.</small>
+            </label>
+            <label>
+              <span>Port</span>
+              <input id="web_port" type="number" min="1024" max="65535" value="1730" />
+            </label>
           </div>
-          <small>Browsers enter this once on the pairing screen, then stay signed in with a secure cookie. API clients can use it as a bearer token.</small>
-        </label>
-        <label>
-          <span>TLS certificate (PEM path)</span>
-          <input id="web_tls_cert" type="text" spellcheck="false" placeholder="(blank = plain HTTP)" />
-          <small>
-            Needed for microphone access from anything other than <code>localhost</code>.
-            Generate one:
-            <code>openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=$(hostname)"</code>
-          </small>
-        </label>
-        <label>
-          <span>TLS private key (PEM path)</span>
-          <input id="web_tls_key" type="text" spellcheck="false" placeholder="(blank = plain HTTP)" />
-        </label>
-        <label class="check">
-          <input id="web_tailscale" type="checkbox" />
-          <span>Publish privately with Tailscale Serve</span>
-        </label>
-        <label>
-          <span>Tailscale executable (optional)</span>
-          <input id="web_tailscale_binary" type="text" spellcheck="false" placeholder="auto — tailscale on PATH" />
-          <small>The app owns a foreground Serve claim, verifies it in <code>tailscale serve status --json</code>, and tears it down on stop.</small>
-        </label>
-        <div class="row">
-          <button id="web_open" type="button" class="secondary">Open web UI</button>
-          <span id="web_state" class="muted">stopped</span>
-        </div>
-        <div id="device_manager">
-          <h3>Paired devices</h3>
-          <p class="muted">Each phone, watch, or browser gets its own credential. Revoking one signs that device out without affecting the others.</p>
-          <div class="row">
-            <input id="device_label" type="text" placeholder="Pixel Watch" autocomplete="off" />
-            <select id="device_type"><option value="wear">Wear OS</option><option value="android">Android</option><option value="web">Browser</option><option value="remote">Other</option></select>
-            <button id="issue_device" type="button" class="secondary">Create connection</button>
+
+          <label>
+            <span>Pairing code / access token</span>
+            <div class="row">
+              <input id="web_token" type="password" autocomplete="off" spellcheck="false" />
+              <button id="generate_web_token" type="button" class="secondary">Generate new</button>
+            </div>
+            <small>Required to open the web UI or connect from another device.</small>
+          </label>
+
+          <label class="check">
+            <input id="web_tailscale" type="checkbox" />
+            <span>Expose via Tailscale HTTPS (requires Tailscale installed and running)</span>
+          </label>
+
+          <div id="web_links" class="web-links">
+            <p><b>Access URLs:</b></p>
+            <ul id="web_urls"></ul>
           </div>
-          <div id="issued_device" class="credential-output" hidden></div>
-          <div id="device_list" class="model-list"></div>
+
+          <details>
+            <summary>Custom TLS certificates (optional)</summary>
+            <p class="muted">
+              Modern browsers require HTTPS to allow microphone access from other devices.
+              Leave blank to use Tailscale or plain HTTP (localhost only).
+            </p>
+            <label>
+              <span>TLS Certificate path (.pem / .crt)</span>
+              <input id="web_tls_cert" type="text" spellcheck="false" placeholder="/path/to/cert.pem" />
+            </label>
+            <label>
+              <span>TLS Private key path (.pem / .key)</span>
+              <input id="web_tls_key" type="text" spellcheck="false" placeholder="/path/to/key.pem" />
+            </label>
+          </details>
+
+          <div class="paired-devices-section">
+            <div class="paired-devices-head">
+              <div>
+                <h3>Paired devices</h3>
+                <p class="muted">Mobile and browser clients paired with this agent.</p>
+              </div>
+              <button id="refresh_paired_devices" type="button" class="secondary">Refresh</button>
+            </div>
+            <div id="paired_devices" class="paired-devices-list"></div>
+          </div>
         </div>
       </section>
 
       <!-- LOG -->
       <section id="tab-log" class="tab">
-        <div class="row">
-          <button id="clear_log" class="secondary">Clear</button>
-          <label class="check inline"><input id="autoscroll" type="checkbox" checked /><span>Auto-scroll</span></label>
+        <div class="log-toolbar">
+          <label class="check">
+            <input id="autoscroll" type="checkbox" checked />
+            <span>Auto-scroll</span>
+          </label>
+          <span class="spacer"></span>
+          <button id="clear_log" type="button" class="secondary">Clear</button>
         </div>
-        <pre id="log"></pre>
+        <pre id="log" class="log-view"></pre>
       </section>
     </main>
 
     <footer>
-      <span id="status" class="muted"></span>
-      <div class="spacer"></div>
-      <button id="save" class="primary">Save</button>
+      <span id="status" class="status"></span>
+      <span class="spacer"></span>
+      <button id="revert" type="button" class="secondary">Revert</button>
+      <button id="save" type="button" class="primary">Save & Apply</button>
     </footer>
 
     <script type="module" src="./settings.js"></script>

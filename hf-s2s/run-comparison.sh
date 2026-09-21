@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cascaded voice agent: Parakeet or Whisper -> local or remote conversational model -> Qwen3-TTS.
+# Cascaded voice agent: Parakeet or Whisper -> local or remote conversational model -> Qwen3-TTS or Kokoro.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -12,6 +12,12 @@ if [[ ! -d "$SHARED_ROOT/.tmp/speech-to-speech" ]]; then
   SHARED_ROOT="$(dirname "$COMMON_GIT_DIR")"
 fi
 UPSTREAM="${HF_S2S_UPSTREAM:-$SHARED_ROOT/.tmp/speech-to-speech}"
+# Model loaders stage GB-sized temporary files (the Parakeet .nemo unpack is
+# ~1 GB). On a RAM-backed /tmp that competes with the models for memory and
+# fails the whole startup, so keep scratch space on disk next to the runtime.
+TMPDIR="${HF_S2S_TMPDIR:-$SHARED_ROOT/.tmp/scratch}"
+mkdir -p "$TMPDIR"
+export TMPDIR
 VENV="$UPSTREAM/.venv"
 PLATFORM="$(uname -s)"
 ARCH="$(uname -m)"
@@ -64,6 +70,20 @@ TTS_HIP_BIN="${HF_S2S_TTS_HIP_BIN:-$SHARED_ROOT/.tmp/qwen3-tts-hip/target/releas
 TTS_HIP_MODEL_DIR="${HF_S2S_TTS_HIP_MODEL_DIR:-/home/nitayrabi/.cache/huggingface/hub/models--Qwen--Qwen3-TTS-12Hz-0.6B-CustomVoice/snapshots/85e237c12c027371202489a0ec509ded67b5e4b5}"
 TTS_HIP_PORT="${HF_S2S_TTS_HIP_PORT:-8021}"
 
+# Text to speech. "qwen3" is the CustomVoice model, which needs the GPU (plus
+# the native HIP server below on Linux). "kokoro" is an 82M model that runs on
+# the CPU, so it leaves the GPU entirely to the conversational model and STT.
+TTS="${HF_S2S_TTS:-qwen3}"
+QWEN3_SPEAKER="${HF_S2S_QWEN3_SPEAKER:-Aiden}"
+KOKORO_VOICE="${HF_S2S_KOKORO_VOICE:-bm_fable}"
+KOKORO_DEVICE="${HF_S2S_KOKORO_DEVICE:-cpu}"
+KOKORO_SPEED="${HF_S2S_KOKORO_SPEED:-1.0}"
+# Kokoro is LSTM-based, so handing it every core makes it markedly slower rather
+# than faster. Measured on this 24-core box, same sentence, best of three:
+# torch default (24 threads) RTF 4.51, 16 threads 0.161, 8 threads 0.146,
+# 4 threads 0.227, 1 thread 0.466. Pin it; the default is the one bad setting.
+KOKORO_THREADS="${HF_S2S_KOKORO_THREADS:-8}"
+
 # Speech recognition. Parakeet is the fastest but only understands European
 # languages. Whisper large-v3-turbo detects the language of every turn, so it
 # handles Hebrew and Hebrew/English mixed speech for roughly 200 ms more per turn.
@@ -102,6 +122,55 @@ case "$STT" in
     exit 1
     ;;
 esac
+
+case "$TTS" in
+  qwen3)
+    if [[ "$PLATFORM" == "Darwin" ]]; then
+      TTS_ARGS=(
+        --tts qwen3
+        --qwen3_tts_model_name "$TTS_MODEL"
+        --qwen3_tts_device mps
+        --qwen3_tts_mlx_quantization "${HF_S2S_TTS_MLX_QUANTIZATION:-6bit}"
+        --qwen3_tts_speaker "$QWEN3_SPEAKER"
+        --qwen3_tts_language auto
+      )
+    else
+      TTS_ARGS=(
+        --tts qwen3
+        --qwen3_tts_model_name "$TTS_MODEL"
+        --qwen3_tts_backend hip-http
+        --qwen3_tts_device cuda
+        --qwen3_tts_dtype bfloat16
+        --qwen3_tts_attn_implementation eager
+        --qwen3_tts_speaker "$QWEN3_SPEAKER"
+        --qwen3_tts_language auto
+        --qwen3_tts_parity_mode True
+      )
+    fi
+    ;;
+  kokoro)
+    # A voice name carries its own language in the first letter -- bm_fable is
+    # British English, af_heart American, jf_alpha Japanese -- so the language
+    # follows the voice unless it is overridden outright.
+    TTS_ARGS=(
+      --tts kokoro
+      --kokoro_device "$KOKORO_DEVICE"
+      --kokoro_voice "$KOKORO_VOICE"
+      --kokoro_lang_code "${HF_S2S_KOKORO_LANG:-${KOKORO_VOICE:0:1}}"
+      --kokoro_speed "$KOKORO_SPEED"
+    )
+    ;;
+  *)
+    echo "Unknown HF_S2S_TTS '${TTS}'; expected 'qwen3' or 'kokoro'." >&2
+    exit 1
+    ;;
+esac
+
+# Kokoro on the CPU needs its thread count pinned before torch starts.
+serve_env=()
+if [[ "$TTS" == "kokoro" && "$KOKORO_DEVICE" == "cpu" ]]; then
+  serve_env+=("OMP_NUM_THREADS=$KOKORO_THREADS" "MKL_NUM_THREADS=$KOKORO_THREADS")
+fi
 
 children=()
 cleanup() {
@@ -152,27 +221,9 @@ if [[ -z "$LLM_BASE_URL" ]]; then
   LLM_BASE_URL="http://127.0.0.1:${LLM_PORT}/v1"
 fi
 
-if [[ "$PLATFORM" == "Darwin" ]]; then
-  # The upstream macOS preset selects MLX/MPS for Parakeet and Qwen3-TTS.
-  # Keep the conversational model on llama.cpp so the app can continue to use
-  # its downloaded GGUF catalog and tool-capable Chat Completions adapter.
-  "$VENV/bin/speech-to-speech" serve \
-    --mac-optimal-settings \
-    --host 127.0.0.1 --port "$BACKEND_PORT" \
-    "${STT_ARGS[@]}" \
-    --llm_backend chat-completions \
-    --model_name "$LLM_NAME" \
-    --responses_api_base_url "$LLM_BASE_URL" \
-    --responses_api_api_key "$LLM_API_KEY" \
-    --tts qwen3 \
-    --qwen3_tts_model_name "$TTS_MODEL" \
-    --qwen3_tts_device mps \
-    --qwen3_tts_mlx_quantization "${HF_S2S_TTS_MLX_QUANTIZATION:-6bit}" \
-    --qwen3_tts_speaker Aiden \
-    --qwen3_tts_language auto \
-    --stream_batch_sentences 1 \
-    --init_chat_prompt "$INIT_CHAT_PROMPT" &
-else
+# Only the Qwen3 path needs the native HIP server; Kokoro runs inside the
+# backend process, so starting it would burn VRAM nothing goes on to use.
+if [[ "$TTS" == "qwen3" && "$PLATFORM" != "Darwin" ]]; then
   LD_LIBRARY_PATH="/lib64:${LD_LIBRARY_PATH:-}" \
     "$TTS_HIP_BIN" "$TTS_HIP_MODEL_DIR" "127.0.0.1:${TTS_HIP_PORT}" 240 &
   tts_hip_pid="$!"
@@ -189,22 +240,33 @@ else
     sleep 0.5
   done
 
-  QWEN3_TTS_HIP_URL="http://127.0.0.1:${TTS_HIP_PORT}" "$VENV/bin/speech-to-speech" serve \
+  serve_env+=("QWEN3_TTS_HIP_URL=http://127.0.0.1:${TTS_HIP_PORT}")
+fi
+
+if [[ "$PLATFORM" == "Darwin" ]]; then
+  # The upstream macOS preset selects MLX/MPS for Parakeet and Qwen3-TTS.
+  # Keep the conversational model on llama.cpp so the app can continue to use
+  # its downloaded GGUF catalog and tool-capable Chat Completions adapter.
+  env ${serve_env[@]+"${serve_env[@]}"} "$VENV/bin/speech-to-speech" serve \
+    --mac-optimal-settings \
     --host 127.0.0.1 --port "$BACKEND_PORT" \
     "${STT_ARGS[@]}" \
     --llm_backend chat-completions \
     --model_name "$LLM_NAME" \
     --responses_api_base_url "$LLM_BASE_URL" \
     --responses_api_api_key "$LLM_API_KEY" \
-    --tts qwen3 \
-    --qwen3_tts_model_name "$TTS_MODEL" \
-    --qwen3_tts_backend hip-http \
-    --qwen3_tts_device cuda \
-    --qwen3_tts_dtype bfloat16 \
-    --qwen3_tts_attn_implementation eager \
-    --qwen3_tts_speaker Aiden \
-    --qwen3_tts_language auto \
-    --qwen3_tts_parity_mode True \
+    "${TTS_ARGS[@]}" \
+    --stream_batch_sentences 1 \
+    --init_chat_prompt "$INIT_CHAT_PROMPT" &
+else
+  env ${serve_env[@]+"${serve_env[@]}"} "$VENV/bin/speech-to-speech" serve \
+    --host 127.0.0.1 --port "$BACKEND_PORT" \
+    "${STT_ARGS[@]}" \
+    --llm_backend chat-completions \
+    --model_name "$LLM_NAME" \
+    --responses_api_base_url "$LLM_BASE_URL" \
+    --responses_api_api_key "$LLM_API_KEY" \
+    "${TTS_ARGS[@]}" \
     --stream_batch_sentences 1 \
     --init_chat_prompt "$INIT_CHAT_PROMPT" &
 fi

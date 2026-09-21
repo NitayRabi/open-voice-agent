@@ -209,6 +209,55 @@ fn d_speech_model() -> String {
 fn d_local() -> String {
     "local".into()
 }
+
+/// Kokoro's built-in voices. The first letter is the language, the second the
+/// gender: a=American English, b=British, e=Spanish, f=French, h=Hindi,
+/// i=Italian, p=Portuguese.
+///
+/// Kokoro also ships Japanese (j*) and Chinese (z*) voices, left out here
+/// because they need extra G2P packages this runtime does not have --
+/// `pyopenjtalk` for Japanese, `ordered_set` for Chinese. Selecting one would
+/// fail at synthesis time, so they are only worth listing once those install.
+///
+/// Only `af_heart` and `bm_fable` ship in the model snapshot; the rest are
+/// fetched from the Hub on first use, so a new voice needs one online run.
+pub const KOKORO_VOICES: &[&str] = &[
+    "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore",
+    "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
+    "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael",
+    "am_onyx", "am_puck", "am_santa",
+    "bf_alice", "bf_emma", "bf_isabella", "bf_lily",
+    "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
+    "ef_dora", "em_alex", "em_santa",
+    "ff_siwis",
+    "hf_alpha", "hf_beta", "hm_omega", "hm_psi",
+    "if_sara", "im_nicola",
+    "pf_dora", "pm_alex", "pm_santa",
+];
+
+/// Qwen3-TTS CustomVoice speakers.
+pub const QWEN3_SPEAKERS: &[&str] = &[
+    "Aiden", "Ryan", "Dylan", "Eric", "Ono_Anna", "Serena", "Sohee", "Uncle_Fu", "Vivian",
+];
+
+impl Settings {
+    /// The voice to hand the launcher. `voice` is shared by both engines and
+    /// their names do not overlap, so a voice left over from the other engine
+    /// falls back to this one's default rather than failing the backend start.
+    pub fn voice_for_engine(&self) -> &str {
+        let v = self.voice.trim();
+        match self.speech_tts.trim() {
+            "kokoro" if KOKORO_VOICES.contains(&v) => v,
+            "kokoro" => "bm_fable",
+            _ if QWEN3_SPEAKERS.contains(&v) => v,
+            _ => "Aiden",
+        }
+    }
+}
+
+fn d_speech_tts() -> String {
+    "qwen3".into()
+}
 fn d_speech_stt() -> String {
     "parakeet".into()
 }
@@ -261,6 +310,10 @@ pub struct Settings {
     /// "whisper-turbo" (auto-detects the language per turn, e.g. Hebrew).
     #[serde(default = "d_speech_stt")]
     pub speech_stt: String,
+    /// Speech synthesis: "qwen3" (CustomVoice, needs the GPU) or "kokoro"
+    /// (82M, runs on the CPU and leaves the GPU to the model and STT).
+    #[serde(default = "d_speech_tts")]
+    pub speech_tts: String,
     #[serde(default)]
     pub mic_device_id: String,
     #[serde(default)]
@@ -540,6 +593,7 @@ impl Settings {
             && self.speech_remote_model == o.speech_remote_model
             && self.speech_remote_api_key == o.speech_remote_api_key
             && self.speech_stt == o.speech_stt
+            && self.speech_tts == o.speech_tts
             && self.web_tls_cert == o.web_tls_cert
             && self.web_tls_key == o.web_tls_key
             && self.web_tailscale == o.web_tailscale
@@ -562,5 +616,64 @@ impl Settings {
         let path = Self::config_path(app)? ;
         let json = serde_json::to_string_pretty(self).context("serialise settings")?;
         fs::write(&path, json).with_context(|| format!("write {path:?}"))
+    }
+}
+
+
+#[cfg(test)]
+mod voice_tests {
+    use super::{Settings, KOKORO_VOICES, QWEN3_SPEAKERS};
+
+    /// The two engines share one `voice` setting, so a voice belonging to the
+    /// other engine must not reach the launcher — Kokoro cannot speak "Aiden"
+    /// and Qwen3 cannot speak "bm_fable", and either would fail at synthesis.
+    #[test]
+    fn voice_falls_back_when_it_belongs_to_the_other_engine() {
+        let mut cfg = Settings::default();
+
+        cfg.speech_tts = "kokoro".into();
+        cfg.voice = "Aiden".into();
+        assert_eq!(cfg.voice_for_engine(), "bm_fable");
+
+        cfg.speech_tts = "qwen3".into();
+        cfg.voice = "bm_fable".into();
+        assert_eq!(cfg.voice_for_engine(), "Aiden");
+    }
+
+    #[test]
+    fn a_voice_matching_the_engine_is_kept() {
+        let mut cfg = Settings::default();
+
+        cfg.speech_tts = "kokoro".into();
+        cfg.voice = "am_michael".into();
+        assert_eq!(cfg.voice_for_engine(), "am_michael");
+
+        cfg.speech_tts = "qwen3".into();
+        cfg.voice = "Vivian".into();
+        assert_eq!(cfg.voice_for_engine(), "Vivian");
+    }
+
+    /// Every listed voice's first letter is its Kokoro language code, which is
+    /// what the launcher derives `--kokoro_lang_code` from.
+    #[test]
+    fn kokoro_voice_names_encode_a_supported_language() {
+        for voice in KOKORO_VOICES {
+            let lang = voice.chars().next().unwrap();
+            assert!(
+                "abefhip".contains(lang),
+                "{voice} starts with unsupported language code {lang:?}"
+            );
+            assert!(voice.len() > 3 && voice.as_bytes()[2] == b'_', "{voice} is not xx_name");
+        }
+        // Japanese and Chinese need G2P packages the runtime does not have.
+        assert!(!KOKORO_VOICES.iter().any(|v| v.starts_with('j') || v.starts_with('z')));
+    }
+
+    /// The UI's voice list and the validation table must not drift apart.
+    #[test]
+    fn defaults_are_present_in_their_engine_tables() {
+        assert!(KOKORO_VOICES.contains(&"bm_fable"));
+        assert!(QWEN3_SPEAKERS.contains(&"Aiden"));
+        assert_eq!(Settings::default().voice, "Aiden");
     }
 }
