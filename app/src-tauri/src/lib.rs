@@ -24,6 +24,7 @@ use crate::assets::AssetManager;
 use crate::backend::BackendManager;
 use crate::config::Settings;
 use crate::localbrain::LocalBrain;
+use crate::openjev::DeciderServer;
 use crate::webserver::WebServer;
 use tauri_plugin_autostart::ManagerExt;
 
@@ -33,6 +34,7 @@ pub struct AppState {
     web: WebServer,
     assets: AssetManager,
     brain_server: LocalBrain,
+    decider: DeciderServer,
     devices: device_access::DeviceRegistry,
     acpx: Acpx,
     realtime: realtime::RealtimeBridge,
@@ -51,7 +53,7 @@ fn revoke_device(state: State<'_, AppState>, id: String) -> Result<bool, String>
     state.devices.revoke(&id).map_err(|e| e.to_string())
 }
 
-// ── commands ───────────────────────────────────────────────────────────────
+// ── commands ──────────────────────────────────────────────────────────
 
 #[tauri::command]
 fn get_settings(state: State<'_, AppState>) -> Settings {
@@ -109,6 +111,7 @@ fn save_settings(
         }
     }
     state.brain_server.reconcile(&app);
+    state.decider.reconcile(&app);
     state.acpx.reconcile(&app);
     app.emit("settings-changed", ()).ok();
     Ok(())
@@ -305,6 +308,7 @@ fn stop_managed_services(app: &AppHandle) {
     let state = app.state::<AppState>();
     state.realtime.disconnect(None);
     state.web.stop(app);
+    state.decider.stop(app);
     state.brain_server.stop(app);
     state.backend.stop(app);
 }
@@ -315,7 +319,7 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
-// ── helpers ────────────────────────────────────────────────────────────────
+// ── helpers ───────────────────────────────────────────────────────────
 
 fn open_settings(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("settings") {
@@ -393,18 +397,16 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 }
             }
             "quit" => {
-                app.state::<AppState>().web.stop(app);
-                app.state::<AppState>().brain_server.stop(app);
-                app.state::<AppState>().backend.stop(app);
+                stop_managed_services(app);
                 app.exit(0);
             }
             _ => {}
         })
-        .build(app)?;
+        .build(app)? ;
     Ok(())
 }
 
-// ── entrypoint ─────────────────────────────────────────────────────────────
+// ── entrypoint ────────────────────────────────────────────────────────
 
 pub fn run() {
     tauri::Builder::default()
@@ -468,6 +470,7 @@ pub fn run() {
                 web: WebServer::default(),
                 assets: AssetManager::default(),
                 brain_server: LocalBrain::default(),
+                decider: DeciderServer::default(),
                 devices,
                 acpx: Acpx::default(),
                 realtime: realtime::RealtimeBridge::default(),
@@ -505,6 +508,13 @@ pub fn run() {
                 let h = handle.clone();
                 std::thread::spawn(move || h.state::<AppState>().brain_server.reconcile(&h));
             }
+
+            // Warm up / ensure decider on startup to eliminate cold starts
+            let h_dec = handle.clone();
+            std::thread::spawn(move || {
+                let cfg = h_dec.state::<AppState>().settings.lock().clone();
+                let _ = h_dec.state::<AppState>().decider.ensure(&h_dec, &cfg);
+            });
 
             // Nudge the bubble toward the lower-right of the primary monitor.
             if let Some(win) = app.get_webview_window("bubble") {

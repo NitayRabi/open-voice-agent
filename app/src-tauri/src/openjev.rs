@@ -1,17 +1,24 @@
-//! OpenJEV Semantic Decision Routing Engine.
+//! OpenJEV / Decider Semantic Decision Routing Engine.
 //!
-//! Evaluates candidate agent profiles in a single forward pass / fast scoring request
-//! using the already running conversational small model server (e.g. Gemma 4 E4B / LFM
-//! via llama-server on LLM_PORT or remote conversational endpoint), eliminating duplicate
-//! GPU memory overhead.
+//! Supervises the Decision Agent (configurable in Settings between OpenJEV Decider 0.7B,
+//! Decider 2B, and TypeSafe JEV Cloud API). When starting the decider llama-server, CUDA/HIP graph
+//! allocation is disabled (`GGML_CUDA_DISABLE_GRAPHS=1`, `GGML_HIP_DISABLE_GRAPHS=1`, and `--no-warmup`)
+//! to reduce startup duration and memory overhead. An initial warm-up message is
+//! sent on load to prime KV cache and eliminate cold start latency when the user speaks.
 
+use std::io::{BufRead, BufReader};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+
 use anyhow::{bail, Result};
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::config::{DelegationAgent, Settings};
+use crate::AppState;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteDecision {
@@ -20,7 +27,214 @@ pub struct RouteDecision {
     pub ack_prompt: String,
 }
 
-/// Resolves the conversational LLM base URL and optional api key.
+#[derive(Default)]
+pub struct DeciderServer {
+    child: Mutex<Option<Child>>,
+    running_sig: Mutex<Option<Settings>>,
+    warmed_up: AtomicBool,
+}
+
+impl DeciderServer {
+    pub fn is_running(&self) -> bool {
+        let mut g = self.child.lock();
+        match g.as_mut() {
+            Some(c) => match c.try_wait() {
+                Ok(Some(_)) => {
+                    *g = None;
+                    false
+                }
+                _ => true,
+            },
+            None => false,
+        }
+    }
+
+    pub fn base_url(&self, cfg: &Settings) -> String {
+        format!("http://127.0.0.1:{}/v1", cfg.decision_agent_port)
+    }
+
+    pub fn reconcile(&self, app: &AppHandle) {
+        let cfg = app.state::<AppState>().settings.lock().clone();
+        if !cfg.delegation_enabled || !cfg.is_local_decider() {
+            self.stop(app);
+            return;
+        }
+        let unchanged = self
+            .running_sig
+            .lock()
+            .as_ref()
+            .map(|s| s.decider_local_eq(&cfg))
+            .unwrap_or(false);
+        if unchanged && self.is_running() {
+            return;
+        }
+        self.stop(app);
+        if let Err(e) = self.start(app, &cfg) {
+            let _ = app.emit("backend-log", format!("[decider] {e}"));
+        }
+    }
+
+    pub fn ensure(&self, app: &AppHandle, cfg: &Settings) -> Result<(), String> {
+        if !cfg.is_local_decider() {
+            return Ok(());
+        }
+        let matches = self
+            .running_sig
+            .lock()
+            .as_ref()
+            .map(|running| running.decider_local_eq(cfg))
+            .unwrap_or(false);
+        if !matches && self.is_running() {
+            self.stop(app);
+        }
+        if !self.is_running() {
+            self.start(app, cfg)?;
+        }
+        let health = format!("http://127.0.0.1:{}/health", cfg.decision_agent_port);
+        for _ in 0..120 {
+            if ureq::get(&health)
+                .timeout(Duration::from_millis(800))
+                .call()
+                .is_ok()
+            {
+                if !self.warmed_up.swap(true, Ordering::SeqCst) {
+                    self.send_initial_warmup(app, cfg);
+                }
+                return Ok(());
+            }
+            if !self.is_running() {
+                return Err("decider server exited during startup (see the Log tab)".into());
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        Err("decider server did not become ready in 60s".into())
+    }
+
+    fn start(&self, app: &AppHandle, cfg: &Settings) -> Result<(), String> {
+        let model = app
+            .state::<AppState>()
+            .assets
+            .resolve(app, &cfg.decision_agent_model)
+            .or_else(|| {
+                app.state::<AppState>()
+                    .assets
+                    .resolve(app, &cfg.brain_local_model)
+            })
+            .ok_or_else(|| {
+                format!(
+                    "no model available for decision agent ({}) — download or configure one in Settings",
+                    cfg.decision_agent_model
+                )
+            })?;
+
+        let bin = if cfg.llama_server_bin.trim().is_empty() {
+            crate::runtime::ensure_llama_server(app)?
+        } else {
+            std::path::PathBuf::from(&cfg.llama_server_bin)
+        };
+
+        let mut cmd = Command::new(&bin);
+        // Disable graphs on startup to prevent slow initialization and heavy memory overhead
+        cmd.env("GGML_CUDA_DISABLE_GRAPHS", "1")
+            .env("GGML_HIP_DISABLE_GRAPHS", "1")
+            .args([
+                "-m",
+                &model.to_string_lossy(),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                &cfg.decision_agent_port.to_string(),
+                "-c",
+                "2048",
+                "-ngl",
+                "999",
+                "--no-warmup",
+                "--no-webui",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("could not start decider {}: {e}", bin.display()))?;
+
+        let pipes = [child.stdout.take().map(as_read), child.stderr.take().map(as_read)];
+        for stream in pipes.into_iter().flatten() {
+            let app = app.clone();
+            std::thread::spawn(move || {
+                for line in BufReader::new(stream).lines().map_while(Result::ok) {
+                    let _ = app.emit("backend-log", format!("[decider] {line}"));
+                }
+            });
+        }
+
+        let _ = app.emit(
+            "backend-log",
+            format!(
+                "[decider] llama-server (no-graphs) on :{} ({})",
+                cfg.decision_agent_port,
+                model.display()
+            ),
+        );
+        *self.child.lock() = Some(child);
+        *self.running_sig.lock() = Some(cfg.clone());
+        self.warmed_up.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// Sends an initial first message onload to prevent cold start when the user speaks.
+    pub fn send_initial_warmup(&self, app: &AppHandle, cfg: &Settings) {
+        let url = format!("http://127.0.0.1:{}/v1/chat/completions", cfg.decision_agent_port);
+        let body = json!({
+            "model": "decider",
+            "messages": [
+                { "role": "system", "content": "You are a fast semantic classifier." },
+                { "role": "user", "content": "warmup" }
+            ],
+            "max_tokens": 1,
+            "temperature": 0.0,
+            "stream": false
+        });
+
+        let app_handle = app.clone();
+        std::thread::spawn(move || {
+            match ureq::post(&url)
+                .timeout(Duration::from_secs(10))
+                .send_json(body)
+            {
+                Ok(_) => {
+                    let _ = app_handle.emit(
+                        "backend-log",
+                        "[decider] Initial onload warm-up complete — zero cold start ready".to_string(),
+                    );
+                }
+                Err(e) => {
+                    let _ = app_handle.emit(
+                        "backend-log",
+                        format!("[decider] Onload warm-up notice: {e}"),
+                    );
+                }
+            }
+        });
+    }
+
+    pub fn stop(&self, app: &AppHandle) {
+        if let Some(mut c) = self.child.lock().take() {
+            let _ = c.kill();
+            let _ = c.wait();
+            let _ = app.emit("backend-log", "[decider] server stopped".to_string());
+        }
+        *self.running_sig.lock() = None;
+        self.warmed_up.store(false, Ordering::SeqCst);
+    }
+}
+
+fn as_read<R: std::io::Read + Send + 'static>(r: R) -> Box<dyn std::io::Read + Send> {
+    Box::new(r)
+}
+
+/// Resolves the fallback conversational LLM base URL and optional api key.
 fn conversational_endpoint(cfg: &Settings) -> Result<(String, String, String)> {
     if cfg.speech_model_source == "remote" {
         let base = cfg.speech_remote_base_url.trim().trim_end_matches('/').to_string();
@@ -45,16 +259,45 @@ fn conversational_endpoint(cfg: &Settings) -> Result<(String, String, String)> {
     }
 }
 
+/// Resolves decision endpoint: prefers local decider server if available,
+/// TypeSafe JEV API if selected, else falls back to running conversational model endpoint.
+fn resolve_decision_endpoint(app: &AppHandle, cfg: &Settings) -> Result<(String, String, String)> {
+    if cfg.decision_agent_model == "typesafe-jev-api" {
+        let base_url = if cfg.decision_agent_base_url.trim().is_empty() {
+            "https://api.typesafe.ai/v1".to_string()
+        } else {
+            cfg.decision_agent_base_url.trim().trim_end_matches('/').to_string()
+        };
+        let api_key = cfg.decision_agent_api_key.trim().to_string();
+        return Ok((base_url, "typesafe-jev".to_string(), api_key));
+    }
+
+    let st = app.state::<AppState>();
+    // Try to ensure local decider server if model is resolvable
+    if st.assets.resolve(app, &cfg.decision_agent_model).is_some()
+        || st.assets.resolve(app, &cfg.brain_local_model).is_some()
+    {
+        if let Ok(()) = st.decider.ensure(app, cfg) {
+            return Ok((
+                format!("http://127.0.0.1:{}/v1", cfg.decision_agent_port),
+                cfg.decision_agent_model.clone(),
+                String::new(),
+            ));
+        }
+    }
+    // Fallback to conversational endpoint
+    conversational_endpoint(cfg)
+}
+
 /// Routes a task request to the appropriate agent.
 ///
 /// If `selected_agent` is specified and is not "orchestrator" / empty:
 /// Focuses purely on that single agent definition.
 ///
 /// If `selected_agent` is None or "orchestrator":
-/// Runs OpenJEV option selection across all available agent definitions using
-/// the running conversational small model (E4B / LFM).
+/// Runs OpenJEV / Decider option selection across all available agent definitions.
 pub fn route_task(
-    _app: &AppHandle,
+    app: &AppHandle,
     cfg: &Settings,
     request: &str,
     selected_agent: Option<&str>,
@@ -106,8 +349,8 @@ pub fn route_task(
         });
     }
 
-    // 3. Multi-agent Orchestrator mode: Run OpenJEV selection using the small model
-    match select_agent_openjev(cfg, agents, clean_req) {
+    // 3. Multi-agent Orchestrator mode: Run Decider / OpenJEV selection
+    match select_agent_decider(app, cfg, agents, clean_req) {
         Ok(idx) if idx < agents.len() => {
             let a = &agents[idx];
             Ok(RouteDecision {
@@ -134,13 +377,14 @@ pub fn route_task(
     }
 }
 
-fn select_agent_openjev(
+fn select_agent_decider(
+    app: &AppHandle,
     cfg: &Settings,
     agents: &[DelegationAgent],
     request: &str,
 ) -> Result<usize> {
-    let (base_url, model_name, api_key) = conversational_endpoint(cfg)?;
-    let url = format!("{}/chat/completions", base_url);
+    let (base_url, model_name, api_key) = resolve_decision_endpoint(app, cfg)?;
+    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
 
     let mut agent_options = String::new();
     for (i, agent) in agents.iter().enumerate() {
@@ -157,7 +401,7 @@ fn select_agent_openjev(
     }
 
     let prompt = format!(
-        "You are OpenJEV semantic router. Decide which agent should handle this task.\n\n\
+        "You are OpenJEV semantic decider. Decide which agent should handle this task.\n\n\
         Candidate Agents:\n{agent_options}\n\
         User Request: \"{request}\"\n\n\
         Reply ONLY with the number of the selected agent in brackets, e.g. [0]."
@@ -187,15 +431,49 @@ fn select_agent_openjev(
         .or_else(|| doc.pointer("/choices/0/text").and_then(Value::as_str))
         .unwrap_or_default();
 
-    // Parse index from response, e.g. "[1]" or "1" or "[0] Milo"
+    parse_agent_index(text, agents.len())
+}
+
+fn parse_agent_index(text: &str, count: usize) -> Result<usize> {
     for char in text.chars() {
         if let Some(digit) = char.to_digit(10) {
             let idx = digit as usize;
-            if idx < agents.len() {
+            if idx < count {
                 return Ok(idx);
             }
         }
     }
+    bail!("could not parse valid agent index from decider output: {text}")
+}
 
-    bail!("could not parse agent choice from: {text}")
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_agent_indices() {
+        assert_eq!(parse_agent_index("[0]", 2).unwrap(), 0);
+        assert_eq!(parse_agent_index("[1] Milo", 2).unwrap(), 1);
+        assert_eq!(parse_agent_index("Agent 1 is selected", 2).unwrap(), 1);
+        assert!(parse_agent_index("[5]", 2).is_err());
+        assert!(parse_agent_index("invalid", 2).is_err());
+    }
+
+    #[test]
+    fn settings_decision_agent_defaults() {
+        let settings = Settings::default();
+        assert_eq!(settings.decision_agent_model, "openjev-decider-0.7b");
+        assert_eq!(settings.decision_agent_port, 8130);
+        assert_eq!(settings.decision_agent_base_url, "https://api.typesafe.ai/v1");
+        assert_eq!(settings.decision_agent_api_key, "");
+        assert!(settings.is_local_decider());
+    }
+
+    #[test]
+    fn typesafe_jev_api_config() {
+        let mut settings = Settings::default();
+        settings.decision_agent_model = "typesafe-jev-api".into();
+        settings.decision_agent_api_key = "apikey_test_123".into();
+        assert!(!settings.is_local_decider());
+    }
 }

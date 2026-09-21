@@ -219,6 +219,26 @@
           <button id="add_delegation_agent" type="button" class="secondary">Add agent</button>
         </div>
         <div id="delegation_agents" class="agent-profiles"></div>
+
+        <div class="field-row">
+          <label class="field">
+            <span>Decision Agent</span>
+            <select id="decision_agent_model">
+              <option value="openjev-decider-0.7b">OpenJEV Decider 0.7B (Ultra-fast, Minimal Memory)</option>
+              <option value="decider-2b">Decider 2B (High Capacity)</option>
+              <option value="typesafe-jev-api">TypeSafe JEV API (Cloud)</option>
+            </select>
+            <small>Fast semantic router used to evaluate candidate agents per request.</small>
+          </label>
+        </div>
+
+        <div id="decision_agent_api_key_wrap" class="field-row" style="display: none;">
+          <label class="field">
+            <span>TypeSafe JEV API Key</span>
+            <input id="decision_agent_api_key" type="password" autocomplete="off" spellcheck="false" placeholder="apikey_..." />
+            <small>API key for TypeSafe JEV hosted decision router.</small>
+          </label>
+        </div>
         <label class="check">
           <input id="delegation_enabled" type="checkbox" />
           <span>Allow voice requests to be handed to the selected agent</span>
